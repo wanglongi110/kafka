@@ -21,7 +21,7 @@ import kafka.utils.{IteratorTemplate, Logging}
 import java.util.concurrent.{TimeUnit, BlockingQueue}
 import kafka.serializer.Decoder
 import java.util.concurrent.atomic.AtomicReference
-import kafka.message.{MessageAndOffset, MessageAndMetadata}
+import kafka.message.{InvalidMessageException, MessageAndOffset, MessageAndMetadata}
 import kafka.common.{KafkaException, MessageSizeTooLargeException}
 
 
@@ -99,7 +99,13 @@ class ConsumerIterator[K, V](private val channel: BlockingQueue[FetchedDataChunk
     }
     consumedOffset = item.nextOffset
 
-    item.message.ensureValid() // validate checksum of message to ensure it is valid
+    try item.message.ensureValid() // validate checksum of message to ensure it is valid
+    catch {
+      case e: InvalidMessageException =>
+        error(s"Invalid message from partition ${currentTopicInfo.topic}-${currentTopicInfo.partitionId}, offset = $consumedOffset")
+        throw e
+      case t: Throwable => throw t
+    }
 
     new MessageAndMetadata(currentTopicInfo.topic,
                            currentTopicInfo.partitionId,
