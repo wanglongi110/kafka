@@ -1478,33 +1478,51 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
           controllerContext.partitionsOnBroker(id)
             .map(topicAndPartition => (topicAndPartition, controllerContext.partitionReplicaAssignment(topicAndPartition).size))
 
-      allPartitionsAndReplicationFactorOnBroker.foreach { case (topicAndPartition, replicationFactor) =>
-        controllerContext.partitionLeadershipInfo.get(topicAndPartition).foreach { currLeaderIsrAndControllerEpoch =>
-          if (replicationFactor > 1) {
-            if (currLeaderIsrAndControllerEpoch.leaderAndIsr.leader == id) {
-              // If the broker leads the topic partition, transition the leader and update isr. Updates zk and
-              // notifies all affected brokers
-              partitionStateMachine.handleStateChanges(Set(topicAndPartition), OnlinePartition,
-                controlledShutdownPartitionLeaderSelector)
-            } else {
-              // Stop the replica first. The state change below initiates ZK changes which should take some time
-              // before which the stop replica request should be completed (in most cases)
-              try {
-                brokerRequestBatch.newBatch()
-                brokerRequestBatch.addStopReplicaRequestForBrokers(Seq(id), topicAndPartition.topic,
-                  topicAndPartition.partition, deletePartition = false)
-                brokerRequestBatch.sendRequestsToBrokers(epoch)
-              } catch {
-                case e: IllegalStateException =>
-                  handleIllegalState(e)
+      val leadersOnBroker = new mutable.HashSet[TopicAndPartition]
+      val followersOnBroker = new mutable.HashSet[PartitionAndReplica]
+
+      allPartitionsAndReplicationFactorOnBroker.foreach {
+        case (topicAndPartition, replicationFactor) =>
+          controllerContext.partitionLeadershipInfo.get(topicAndPartition).foreach { currLeaderIsrAndControllerEpoch =>
+            if (replicationFactor > 1) {
+              if (currLeaderIsrAndControllerEpoch.leaderAndIsr.leader == id) {
+                leadersOnBroker += topicAndPartition
+              } else {
+                followersOnBroker += PartitionAndReplica(topicAndPartition.topic, topicAndPartition.partition, id)
               }
-              // If the broker is a follower, updates the isr in ZK and notifies the current leader
-              replicaStateMachine.handleStateChanges(Set(PartitionAndReplica(topicAndPartition.topic,
-                topicAndPartition.partition, id)), OfflineReplica)
+            }
+          }
+      }
+
+      val groupedLeadersOnBroker = leadersOnBroker.grouped(config.controlledShutdownPartitionBatchSize)
+      val groupedFollowersOnBroker = followersOnBroker.grouped(config.controlledShutdownPartitionBatchSize)
+
+      groupedLeadersOnBroker.foreach { leadersOnBroker =>
+        // If the broker leads the topic partition, transition the leader and update isr. Updates zk and
+        // notifies all affected brokers
+        partitionStateMachine.handleStateChanges(leadersOnBroker, OnlinePartition,
+          controlledShutdownPartitionLeaderSelector)
+      }
+
+      groupedFollowersOnBroker.foreach { followersOnBroker =>
+        // Stop the replica first. The state change below initiates ZK changes which should take some time
+        // before which the stop replica request should be completed (in most cases)
+        brokerRequestBatch.newBatch()
+        followersOnBroker.foreach { partitionAndReplica =>
+          try {
+            brokerRequestBatch.addStopReplicaRequestForBrokers(Seq(partitionAndReplica.replica), partitionAndReplica.topic,
+              partitionAndReplica.partition, deletePartition = false)
+          } catch {
+            case e: IllegalStateException => {
+              handleIllegalState(e)
             }
           }
         }
+        brokerRequestBatch.sendRequestsToBrokers(epoch)
+        // If the broker is a follower, updates the isr in ZK and notifies the current leader
+        replicaStateMachine.handleStateChanges(followersOnBroker, OfflineReplica)
       }
+
       def replicatedPartitionsBrokerLeads() = {
         trace("All leaders = " + controllerContext.partitionLeadershipInfo.mkString(","))
         controllerContext.partitionLeadershipInfo.filter {
