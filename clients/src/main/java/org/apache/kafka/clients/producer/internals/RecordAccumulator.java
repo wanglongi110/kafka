@@ -267,16 +267,27 @@ public final class RecordAccumulator {
     /**
      * Get a list of batches which have been sitting in the accumulator too long and need to be expired.
      */
-    public List<ProducerBatch> expiredBatches(int requestTimeout, long now) {
+    public List<ProducerBatch> expiredBatches(int requestTimeout, boolean isMetadataStale, Cluster cluster, long now) {
         List<ProducerBatch> expiredBatches = new ArrayList<>();
         for (Map.Entry<TopicPartition, Deque<ProducerBatch>> entry : this.batches.entrySet()) {
             Deque<ProducerBatch> dq = entry.getValue();
             TopicPartition tp = entry.getKey();
-            // We only check if the batch should be expired if the partition does not have a batch in flight.
-            // This is to prevent later batches from being expired while an earlier batch is still in progress.
-            // Note that `muted` is only ever populated if `max.in.flight.request.per.connection=1` so this protection
-            // is only active in this case. Otherwise the expiration order is not guaranteed.
-            if (!muted.contains(tp)) {
+            // We check if the batch should be expired if we know that we can't make progress on a given
+            // topic-partition. Specifically, we check if
+            // (1) the partition does not have a batch in flight.
+            // (2) Either the metadata is too stale or we don't have a leader for a partition.
+            //
+            // The first condition prevents later batches from being expired while an earlier batch is
+            // still in progress. We don't want batches to expire out-of-order. Note that `muted` is only ever
+            // populated if `max.in.flight.request.per.connection=1` so this protection
+            //
+            // The second condition allows expiration of lingering batches if we don't have a leader for
+            // the partition.
+            //
+            // Finally, we expire batches if the last metadata refresh was too long ago. We might run in to
+            // this situation when the producer is disconnected from all the brokers. Note that stale metadata
+            // is significantly longer than metadata.max.age.
+            if (!muted.contains(tp) && (isMetadataStale || cluster.leaderFor(tp) == null)) {
                 synchronized (dq) {
                     // iterate over the batches and expire them if they have been in the accumulator for more than requestTimeOut
                     ProducerBatch lastBatch = dq.peekLast();

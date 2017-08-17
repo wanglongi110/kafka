@@ -534,11 +534,11 @@ public class RecordAccumulatorTest {
         // Advance the clock to expire the batch.
         time.sleep(requestTimeout + 1);
         accum.mutePartition(tp1);
-        List<ProducerBatch> expiredBatches = accum.expiredBatches(requestTimeout, time.milliseconds());
+        List<ProducerBatch> expiredBatches = accum.expiredBatches(requestTimeout, true, cluster, time.milliseconds());
         assertEquals("The batch should not be expired when the partition is muted", 0, expiredBatches.size());
 
         accum.unmutePartition(tp1);
-        expiredBatches = accum.expiredBatches(requestTimeout, time.milliseconds());
+        expiredBatches = accum.expiredBatches(requestTimeout, true, cluster, time.milliseconds());
         assertEquals("The batch should be expired", 1, expiredBatches.size());
         assertEquals("No partitions should be ready.", 0, accum.ready(cluster, time.milliseconds()).readyNodes.size());
 
@@ -548,11 +548,11 @@ public class RecordAccumulatorTest {
         time.sleep(requestTimeout + 1);
 
         accum.mutePartition(tp1);
-        expiredBatches = accum.expiredBatches(requestTimeout, time.milliseconds());
+        expiredBatches = accum.expiredBatches(requestTimeout, true, cluster, time.milliseconds());
         assertEquals("The batch should not be expired when metadata is still available and partition is muted", 0, expiredBatches.size());
 
         accum.unmutePartition(tp1);
-        expiredBatches = accum.expiredBatches(requestTimeout, time.milliseconds());
+        expiredBatches = accum.expiredBatches(requestTimeout, true, cluster, time.milliseconds());
         assertEquals("The batch should be expired when the partition is not muted", 1, expiredBatches.size());
         assertEquals("No partitions should be ready.", 0, accum.ready(cluster, time.milliseconds()).readyNodes.size());
 
@@ -569,16 +569,16 @@ public class RecordAccumulatorTest {
 
         // test expiration.
         time.sleep(requestTimeout + retryBackoffMs);
-        expiredBatches = accum.expiredBatches(requestTimeout, time.milliseconds());
+        expiredBatches = accum.expiredBatches(requestTimeout, true, cluster, time.milliseconds());
         assertEquals("The batch should not be expired.", 0, expiredBatches.size());
         time.sleep(1L);
 
         accum.mutePartition(tp1);
-        expiredBatches = accum.expiredBatches(requestTimeout, time.milliseconds());
+        expiredBatches = accum.expiredBatches(requestTimeout, true, cluster, time.milliseconds());
         assertEquals("The batch should not be expired when the partition is muted", 0, expiredBatches.size());
 
         accum.unmutePartition(tp1);
-        expiredBatches = accum.expiredBatches(requestTimeout, time.milliseconds());
+        expiredBatches = accum.expiredBatches(requestTimeout, true, cluster, time.milliseconds());
         assertEquals("The batch should be expired when the partition is not muted.", 1, expiredBatches.size());
     }
 

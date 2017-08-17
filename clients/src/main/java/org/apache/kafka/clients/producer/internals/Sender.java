@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.util.ArrayList;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
@@ -111,6 +112,9 @@ public class Sender implements Runnable {
     /* the max time to wait for the server to respond to the request*/
     private final int requestTimeout;
 
+    /* the max time to wait before expiring batches. */
+    private final long metadataStaleMs;
+
     /* The max time to wait before retrying a request which has failed */
     private final long retryBackoffMs;
 
@@ -149,6 +153,7 @@ public class Sender implements Runnable {
         this.retryBackoffMs = retryBackoffMs;
         this.apiVersions = apiVersions;
         this.transactionManager = transactionManager;
+        this.metadataStaleMs = getMetadataStaleMs(metadata.maxAge(), requestTimeout, metadata.refreshBackoff());
     }
 
     /**
@@ -262,7 +267,11 @@ public class Sender implements Runnable {
             }
         }
 
-        List<ProducerBatch> expiredBatches = this.accumulator.expiredBatches(this.requestTimeout, now);
+        boolean stale = isMetadataStale(now, metadata, this.metadataStaleMs);
+        List<ProducerBatch> expiredBatches = new ArrayList<>();
+        if (stale || !result.unknownLeaderTopics.isEmpty()) {
+            expiredBatches = this.accumulator.expiredBatches(this.requestTimeout, stale, cluster, now);
+        }
         boolean needsTransactionStateReset = false;
         // Reset the producer id if an expired batch has previously been sent to the broker. Also update the metrics
         // for expired batches. see the documentation of @TransactionState.resetProducerId to understand why
@@ -684,6 +693,20 @@ public class Sender implements Runnable {
         produceThrottleTimeSensor.add(metrics.metricName("produce-throttle-time-max",
                 metricGrpName, "The maximum throttle time in ms"), new Max());
         return produceThrottleTimeSensor;
+    }
+
+    /* metadata becomes "stale" for batch expiry purpose when the time since the last successful update exceeds
+     * the metadataStaleMs value. This value must be greater than the metadata.max.age and some delta to account
+     * for a few retries and transient network disconnections. A small number of retries (3) are chosen because
+     * metadata retries have no upper bound. However, as retries are subject to both regular request timeout and
+     * the backoff, staleness determination is delayed by that factor.
+     */
+    static long getMetadataStaleMs(long metadataMaxAge, int requestTimeout, long refreshBackoff) {
+        return metadataMaxAge + 3 * (requestTimeout + refreshBackoff);
+    }
+
+    static boolean isMetadataStale(long now, Metadata metadata, long metadataStaleMs) {
+        return (now - metadata.lastSuccessfulUpdate()) > metadataStaleMs;
     }
 
     /**
