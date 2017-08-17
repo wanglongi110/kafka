@@ -276,6 +276,7 @@ class ClientQuotaManagerTest {
     val metrics = newMetrics
     val clientMetrics = new ClientQuotaManager(config, metrics, Produce, time, Some(scheduler), "")
     val queueSizeMetric = metrics.metrics().get(metrics.metricName("queue-size", "Produce", ""))
+    val throttleCountMetric = metrics.metrics().get(metrics.metricName("throttle-count", "Produce", ""))
     try {
       /* We have 10 second windows. Make sure that there is no quota violation
        * if we produce under the quota
@@ -295,7 +296,10 @@ class ClientQuotaManagerTest {
 
       assertEquals("Should be throttled", 2100, sleepTime)
       throttle(clientMetrics, "ANONYMOYUS", "unknown", sleepTime, callback)
+
       assertEquals(1, queueSizeMetric.metricValue.asInstanceOf[Double].toInt)
+      assertEquals(1, throttleCountMetric.metricValue.asInstanceOf[Double].toInt)
+
       // After a request is delayed, the callback cannot be triggered immediately
       clientMetrics.throttledChannelReaper.doWork()
       assertEquals(0, numCallbacks)
@@ -303,7 +307,10 @@ class ClientQuotaManagerTest {
 
       // Callback can only be triggered after the delay time passes
       clientMetrics.throttledChannelReaper.doWork()
+
+      assertEquals(1, throttleCountMetric.metricValue.asInstanceOf[Double].toInt)
       assertEquals(0, queueSizeMetric.metricValue.asInstanceOf[Double].toInt)
+
       assertEquals(1, numCallbacks)
 
       // Could continue to see delays until the bursty sample disappears
