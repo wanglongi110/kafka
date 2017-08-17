@@ -18,7 +18,9 @@
 package kafka.consumer
 
 import java.util.Properties
+
 import kafka.api.OffsetRequest
+import kafka.common.{Config, InvalidConfigException}
 import kafka.utils._
 import kafka.common.{InvalidConfigException, Config}
 import java.util.Locale
@@ -92,12 +94,9 @@ object ConsumerConfig extends Config {
   }
 
   def validatePartitionAssignmentStrategy(strategy: String) {
-    strategy match {
-      case "range" =>
-      case "roundrobin" =>
-      case _ => throw new InvalidConfigException("Wrong value " + strategy + " of partition.assignment.strategy in consumer config; " +
-        "Valid values are 'range' and 'roundrobin'")
-    }
+    if (!PartitionAssignmentStrategies.isValid(strategy))
+      throw new InvalidConfigException("Wrong value " + strategy + " of partition.assignment.strategy in consumer config; " +
+        "Valid values are " + PartitionAssignmentStrategies.validStrategies)
   }
 }
 
@@ -197,7 +196,8 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
   /** Whether messages from internal topics (such as offsets) should be exposed to the consumer. */
   val excludeInternalTopics = props.getBoolean("exclude.internal.topics", ExcludeInternalTopics)
 
-  /** Select a strategy for assigning partitions to consumer streams. Possible values: range, roundrobin */
+  /** Select a strategy for assigning partitions to consumer streams.
+    *  Possible values: range, roundrobin, roundrobinv1, roundrobinv2, symmetric */
   val partitionAssignmentStrategy = props.getString("partition.assignment.strategy", DefaultPartitionAssignmentStrategy)
 
   validate(this)

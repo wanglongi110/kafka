@@ -18,7 +18,8 @@
 package kafka.consumer
 
 import kafka.common.TopicAndPartition
-import kafka.utils.{Pool, CoreUtils, ZkUtils, Logging}
+import kafka.consumer.PartitionAssignmentStrategies._
+import kafka.utils.{CoreUtils, Logging, Pool, ZkUtils}
 
 import scala.collection.mutable
 
@@ -38,9 +39,15 @@ trait PartitionAssignor {
 @deprecated("This object has been deprecated and will be removed in a future release. " +
             "Please use org.apache.kafka.clients.consumer.internals.PartitionAssignor instead.", "0.11.0.0")
 object PartitionAssignor {
-  def createInstance(assignmentStrategy: String) = assignmentStrategy match {
-    case "roundrobin" => new RoundRobinAssignor()
-    case _ => new RangeAssignor()
+  def createInstance(assignmentStrategyName: String) = {
+    val assignmentStrategy: PartitionAssignmentStrategies.Strategy = PartitionAssignmentStrategies(assignmentStrategyName)
+    assignmentStrategy match {
+      case RangeStrategy => new RangeAssignor()
+      case RoundRobinStrategy => new RoundRobinAssignor(RoundRobinStrategy)
+      case RoundRobinV1Strategy => new RoundRobinAssignor(RoundRobinV1Strategy)
+      case RoundRobinV2Strategy => new RoundRobinAssignor(RoundRobinV2Strategy)
+      case SymmetricStrategy => new RoundRobinAssignor(SymmetricStrategy)
+    }
   }
 }
 
@@ -62,14 +69,15 @@ class AssignmentContext(group: String, val consumerId: String, excludeInternalTo
 }
 
 /**
- * The round-robin partition assignor lays out all the available partitions and all the available consumer threads. It
- * then proceeds to do a round-robin assignment from partition to consumer thread. If the subscriptions of all consumer
+ * The round-robin partition assignor lays out all the available partitions in a certain order (depending on whether
+ * the user wants symmetric/roundrobinv1/roundrobinv2; and lays out all the available consumer threads.
+ * It then proceeds to do a round-robin assignment from partition to consumer thread. If the subscriptions of all consumer
  * instances are identical, then the partitions will be uniformly distributed. (i.e., the partition ownership counts
  * will be within a delta of exactly one across all consumer threads.)
  */
-@deprecated("This class has been deprecated and will be removed in a future release. " +
-            "Please use org.apache.kafka.clients.consumer.RoundRobinAssignor instead.", "0.11.0.0")
-class RoundRobinAssignor() extends PartitionAssignor with Logging {
+
+@deprecated("This class has been deprecated and will be removed in a future release. Please use org.apache.kafka.clients.consumer.RoundRobinAssignor instead.", "0.11.0.0")
+class RoundRobinAssignor(specificStrategy: PartitionAssignmentStrategies.RoundRobinVariant) extends PartitionAssignor with Logging {
 
   def assign(ctx: AssignmentContext) = {
 
@@ -85,20 +93,14 @@ class RoundRobinAssignor() extends PartitionAssignor with Logging {
 
       val threadAssignor = CoreUtils.circularIterator(allThreadIds)
 
-      info("Starting round-robin assignment with consumers " + ctx.consumers)
+      info("Starting round-robin (%s) assignment with consumers ".format(specificStrategy.toString) + ctx.consumers)
       val allTopicPartitions = ctx.partitionsForTopic.flatMap { case (topic, partitions) =>
         info("Consumer %s rebalancing the following partitions for topic %s: %s"
           .format(ctx.consumerId, topic, partitions))
         partitions.map(partition => {
           TopicAndPartition(topic, partition)
         })
-      }.toSeq.sortWith((topicPartition1, topicPartition2) => {
-        /*
-         * Randomize the order by taking the hashcode to reduce the likelihood of all partitions of a given topic ending
-         * up on one consumer (if it has a high enough stream count).
-         */
-        topicPartition1.toString.hashCode < topicPartition2.toString.hashCode
-      })
+      }.toSeq.sortWith(specificStrategy.partitionOrder)
 
       allTopicPartitions.foreach(topicPartition => {
         val threadId = threadAssignor.dropWhile(threadId => !ctx.consumersForTopic(topicPartition.topic).contains(threadId)).next
