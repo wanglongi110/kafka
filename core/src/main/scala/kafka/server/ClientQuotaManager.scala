@@ -147,7 +147,7 @@ class ClientQuotaManager(private val config: ClientQuotaManagerConfig,
   private val sensorAccessor = new SensorAccess(lock, metrics)
   val throttledRequestReaper = new ThrottledRequestReaper(delayQueue)
 
-  private val delayQueueSensor = metrics.sensor(quotaType + "-delayQueue")
+  private val delayQueueSensor = metrics.sensor(quotaType + "-delayQueueSize")
   delayQueueSensor.add(metrics.metricName("queue-size",
                                       quotaType.toString,
                                       "Tracks the size of the delay queue"), new Total())
@@ -160,6 +160,12 @@ class ClientQuotaManager(private val config: ClientQuotaManagerConfig,
       case _ =>
     }
   }
+
+
+  private val throttledRequestCountSensor = metrics.sensor(quotaType + "-throttledRequestCount")
+  throttledRequestCountSensor.add(metrics.metricName("throttle-count",
+                                                     quotaType.toString,
+                                                     "Tracks the number of requests that have been throttled"), new Total())
 
   /**
    * Reaper thread that triggers callbacks on all throttled requests
@@ -242,6 +248,8 @@ class ClientQuotaManager(private val config: ClientQuotaManagerConfig,
         // If delayed, add the element to the delayQueue
         delayQueue.add(new ThrottledResponse(time, throttleTimeMs, callback))
         delayQueueSensor.record()
+        throttledRequestCountSensor.record()
+        // If delayed, add the element to the delayQueue
         logger.debug("Quota violated for sensor (%s). Delay time: (%d)".format(clientSensors.quotaSensor.name(), throttleTimeMs))
     }
     throttleTimeMs
