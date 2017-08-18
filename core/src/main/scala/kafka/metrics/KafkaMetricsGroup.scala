@@ -102,6 +102,7 @@ object KafkaMetricsGroup extends KafkaMetricsGroup with Logging {
     new MetricName("kafka.consumer", "ZookeeperConsumerConnector", "OwnedPartitionsCount"),
 
     // kafka.consumer.ConsumerFetcherManager
+    new MetricName("kafka.consumer", "ConsumerFetcherManager", "MaxFetcherThreadInactiveTimeMs"),
     new MetricName("kafka.consumer", "ConsumerFetcherManager", "MaxLag"),
     new MetricName("kafka.consumer", "ConsumerFetcherManager", "MinFetchRate"),
 
