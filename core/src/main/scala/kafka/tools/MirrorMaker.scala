@@ -83,6 +83,16 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
       def value = numDroppedMessages.get()
     })
 
+  newGauge("MirrorMaker-maxMirrorMakerThreadNoCommitTimeMs",
+    new Gauge[Long] {
+      def value = {
+        val currentTimeMs = System.currentTimeMillis
+        currentTimeMs - mirrorMakerThreads.foldLeft(currentTimeMs)((earliestCommitTimeMs, mirrorMakerThreadMapEntry) => {
+          math.min(earliestCommitTimeMs, mirrorMakerThreadMapEntry.getLastOffsetCommitMs)
+        })
+      }
+    })
+
   def main(args: Array[String]) {
 
     info("Starting mirror maker")
@@ -413,6 +423,8 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
     @volatile private var shuttingDown: Boolean = false
     this.logIdent = "[%s] ".format(threadName)
 
+    def getLastOffsetCommitMs: Long = lastOffsetCommitMs
+
     setName(threadName)
 
     override def run() {
@@ -620,7 +632,7 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
     override def notifyCommit() {
       // Do nothing
     }
-    
+
     override def commitRequested(): Boolean = {
       false
     }

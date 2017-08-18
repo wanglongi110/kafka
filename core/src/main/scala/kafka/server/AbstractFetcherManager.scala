@@ -34,6 +34,18 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
   private val mapLock = new Object
   this.logIdent = "[" + name + "] "
 
+  newGauge("MaxFetcherThreadInactiveTimeMs",
+    new Gauge[Long] {
+      def value = {
+        val currentTimeMs = System.currentTimeMillis
+        currentTimeMs - fetcherThreadMap.foldLeft(currentTimeMs)((earliestFetchTimeMs, fetcherThreadMapEntry) => {
+          math.min(earliestFetchTimeMs, fetcherThreadMapEntry._2.lastFetchTimeMs)
+        })
+      }
+    },
+    Map("clientId" -> clientId)
+  )
+
   newGauge(
     "MaxLag",
     new Gauge[Long] {
