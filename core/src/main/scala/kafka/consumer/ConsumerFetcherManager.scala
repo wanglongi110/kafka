@@ -17,9 +17,12 @@
 
 package kafka.consumer
 
-import kafka.server.{ScalaConsumerAbstractFetcherManager, ScalaConsumerAbstractFetcherThread, BrokerAndInitialOffset}
+import kafka.server.{BrokerAndInitialOffset, ScalaConsumerAbstractFetcherManager, ScalaConsumerAbstractFetcherThread}
 import kafka.cluster.{BrokerEndPoint, Cluster}
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.protocol.ApiKeys
+import org.apache.kafka.common.{Cluster => JCluster}
+import org.apache.kafka.common.requests.{MetadataRequest => JMetadataRequest, MetadataResponse => JMetadataResponse}
 import org.apache.kafka.common.utils.Time
 
 import scala.collection.immutable
@@ -32,6 +35,8 @@ import kafka.utils.ZkUtils
 import kafka.utils.ShutdownableThread
 import kafka.client.ClientUtils
 import java.util.concurrent.atomic.AtomicInteger
+
+import org.apache.kafka.clients.{ClientDnsLookup, CommonClientConfigs, ManualMetadataUpdater}
 
 /**
  *  Usage:
@@ -51,6 +56,16 @@ class ConsumerFetcherManager(private val consumerIdString: String,
   private var leaderFinderThread: ShutdownableThread = null
   private val correlationId = new AtomicInteger(0)
 
+  private val isSSL = config.sslConfigs.isDefined
+  private val metadataNetworkClientOpt = config.sslConfigs.map(sslConfigs => {
+    val addresses = org.apache.kafka.clients.ClientUtils.parseAndValidateAddresses(
+      sslConfigs.getList(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG), ClientDnsLookup.DEFAULT)
+    val bootstrapNodes = JCluster.bootstrap(addresses).nodes
+    val metadataUpdater = new ManualMetadataUpdater()
+    metadataUpdater.setNodes(bootstrapNodes)
+    new SSLNetworkClient(config, metadataUpdater)
+  })
+
   private class LeaderFinderThread(name: String) extends ShutdownableThread(name) {
     // thread responsible for adding the fetcher to the right broker when leader is available
     override def doWork() {
@@ -63,23 +78,48 @@ class ConsumerFetcherManager(private val consumerIdString: String,
         }
 
         trace("Partitions without leader %s".format(noLeaderPartitionSet))
-        val brokers = ClientUtils.getPlaintextBrokerEndPoints(zkUtils)
-        val topicsMetadata = ClientUtils.fetchTopicMetadata(noLeaderPartitionSet.map(m => m.topic).toSet,
-                                                            brokers,
-                                                            config.clientId,
-                                                            config.socketTimeoutMs,
-                                                            correlationId.getAndIncrement).topicsMetadata
-        if(isDebugEnabled) topicsMetadata.foreach(topicMetadata => debug(topicMetadata.toString()))
-        topicsMetadata.foreach { tmd =>
-          val topic = tmd.topic
-          tmd.partitionsMetadata.foreach { pmd =>
-            val topicAndPartition = new TopicPartition(topic, pmd.partitionId)
-            if(pmd.leader.isDefined && noLeaderPartitionSet.contains(topicAndPartition)) {
-              val leaderBroker = pmd.leader.get
-              leaderForPartitionsMap.put(topicAndPartition, leaderBroker)
-              noLeaderPartitionSet -= topicAndPartition
+        if (!isSSL) {
+          val brokers = ClientUtils.getPlaintextBrokerEndPoints(zkUtils)
+          val topicsMetadata = ClientUtils.fetchTopicMetadata(noLeaderPartitionSet.map(m => m.topic).toSet,
+            brokers,
+            config.clientId,
+            config.socketTimeoutMs,
+            correlationId.getAndIncrement).topicsMetadata
+          if (isDebugEnabled) topicsMetadata.foreach(topicMetadata => debug(topicMetadata.toString()))
+          topicsMetadata.foreach { tmd =>
+            val topic = tmd.topic
+            tmd.partitionsMetadata.foreach { pmd =>
+              val topicAndPartition = new TopicPartition(topic, pmd.partitionId)
+              if (pmd.leader.isDefined && noLeaderPartitionSet.contains(topicAndPartition)) {
+                val leaderBroker = pmd.leader.get
+                leaderForPartitionsMap.put(topicAndPartition, leaderBroker)
+                noLeaderPartitionSet -= topicAndPartition
+              }
             }
           }
+        }
+        else {
+          val networkClient = metadataNetworkClientOpt.get
+          val topicList = {
+            val list = new java.util.ArrayList[String]()
+            val topics = noLeaderPartitionSet.map(_.topic()).toSet
+            topics.foreach(topic => list.add(topic))
+            list
+          }
+          // if there are any errors, we swallow it and retry after the leader finder backoff
+          val version = new java.lang.Short("2")
+          val clientResponse = networkClient.sendRequest(ApiKeys.METADATA, new JMetadataRequest.Builder(topicList, version))
+          val metadataResponse = clientResponse.responseBody.asInstanceOf[JMetadataResponse]
+          val cluster = metadataResponse.cluster()
+
+          noLeaderPartitionSet.foreach(partition => {
+            val leader = cluster.leaderFor(partition)
+            if (leader != null) {
+              val endPoint = new BrokerEndPoint(leader.id(), leader.host(), leader.port())
+              leaderForPartitionsMap.put(partition, endPoint)
+              noLeaderPartitionSet -= partition
+            }
+          })
         }
       } catch {
         case t: Throwable => {
@@ -114,7 +154,10 @@ class ConsumerFetcherManager(private val consumerIdString: String,
   }
 
   override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ScalaConsumerAbstractFetcherThread = {
-    new ConsumerFetcherThread(consumerIdString, fetcherId, config, sourceBroker, partitionMap, this)
+    if (isSSL)
+      new SSLConsumerFetcherThread(consumerIdString, fetcherId, config, sourceBroker, partitionMap, this)
+    else
+      new ConsumerFetcherThread(consumerIdString, fetcherId, config, sourceBroker, partitionMap, this)
   }
 
   def startConnections(topicInfos: Iterable[PartitionTopicInfo], cluster: Cluster) {
