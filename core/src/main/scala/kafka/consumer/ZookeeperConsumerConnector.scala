@@ -536,24 +536,21 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
   }
 
   class ZKTopicPartitionChangeListener(val loadBalancerListener: ZKRebalancerListener)
-    extends IZkDataListener {
+    extends IZkChildListener {
 
-    def handleDataChange(dataPath : String, data: Object) {
+    def handleChildChange(path : String, children: java.util.List[String]) {
       try {
-        info("Topic info for path " + dataPath + " changed to " + data.toString + ", triggering rebalance")
+        if (children != null)
+          info("Children number for path " + path + " changed to " + children.size() + ", triggering rebalance")
+        else
+          info("Topic for path " + path + " has been deleted")
         // queue up the rebalance event
         loadBalancerListener.rebalanceEventTriggered()
         // There is no need to re-subscribe the watcher since it will be automatically
         // re-registered upon firing of this event by zkClient
       } catch {
-        case e: Throwable => error("Error while handling topic partition change for data path " + dataPath, e )
+        case e: Throwable => error("Error while handling topic partition change for data path " + path, e )
       }
-    }
-
-    @throws[Exception]
-    def handleDataDeleted(dataPath : String) {
-      // TODO: This need to be implemented when we support delete topic
-      warn("Topic for path " + dataPath + " gets deleted, which should not happen at this time")
     }
   }
 
@@ -965,8 +962,8 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
 
     topicStreamsMap.foreach { topicAndStreams =>
       // register on broker partition path changes
-      val topicPath = BrokerTopicsPath + "/" + topicAndStreams._1
-      zkUtils.subscribeDataChanges(topicPath, topicPartitionChangeListener)
+      val topicPartitionsPath = ZkUtils.getTopicPartitionsPath(topicAndStreams._1)
+      zkUtils.zkClient.subscribeChildChanges(topicPartitionsPath, topicPartitionChangeListener)
     }
 
     // explicitly trigger load balancing for this consumer
