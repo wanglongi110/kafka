@@ -64,6 +64,18 @@ public class MetadataRequest extends AbstractRequest {
             this(topics, allowAutoTopicCreation, ApiKeys.METADATA.oldestVersion(),  ApiKeys.METADATA.latestVersion());
         }
 
+        public Builder(List<String> topics, Short desiredVersion) {
+            super(ApiKeys.METADATA, desiredVersion);
+            MetadataRequestData data = new MetadataRequestData();
+            if (topics == null)
+                data.setTopics(null);
+            else {
+                topics.forEach(topic -> data.topics().add(new MetadataRequestTopic().setName(topic)));
+            }
+            data.setAllowAutoTopicCreation(true);
+            this.data = data;
+        }
+
         public static Builder allTopics() {
             // This never causes auto-creation, but we set the boolean to true because that is the default value when
             // deserializing V2 and older. This way, the value is consistent after serialization and deserialization.
