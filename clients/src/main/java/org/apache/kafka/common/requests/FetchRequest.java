@@ -107,6 +107,10 @@ public class FetchRequest extends AbstractRequest {
         private final IsolationLevel isolationLevel;
         private int maxBytes = DEFAULT_RESPONSE_MAX_BYTES;
 
+        public static Builder forConsumer(Short version, int maxWait, int minBytes, LinkedHashMap<TopicPartition, PartitionData> fetchData) {
+            return new Builder(version, CONSUMER_REPLICA_ID, maxWait, minBytes, fetchData, IsolationLevel.READ_UNCOMMITTED);
+        }
+
         public static Builder forConsumer(int maxWait, int minBytes, LinkedHashMap<TopicPartition, PartitionData> fetchData) {
             return new Builder(null, CONSUMER_REPLICA_ID, maxWait, minBytes, fetchData, IsolationLevel.READ_UNCOMMITTED);
         }

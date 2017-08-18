@@ -46,6 +46,12 @@ public class MetadataRequest extends AbstractRequest {
             return new Builder(ALL_TOPICS, true);
         }
 
+        public Builder(List<String> topics, Short desiredVersion) {
+            super(ApiKeys.METADATA, desiredVersion);
+            this.topics = topics;
+            this.allowAutoTopicCreation = true;
+        }
+
         public Builder(List<String> topics, boolean allowAutoTopicCreation) {
             super(ApiKeys.METADATA);
             this.topics = topics;

@@ -35,6 +35,7 @@ import org.apache.kafka.clients.consumer._
 import org.apache.kafka.clients.producer.internals.ErrorLoggingCallback
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord, RecordMetadata}
 import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.protocol.SecurityProtocol
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.common.errors.WakeupException
@@ -195,7 +196,8 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
           sys.exit(1)
         }
 
-        if (consumerProps.containsKey(NewConsumerConfig.BOOTSTRAP_SERVERS_CONFIG)) {
+        // throw error iff the old consumer is NOT using SSL and also has the "bootstrap.servers" property specified.
+        if (!consumerProps.getProperty("security.protocol").equals(SecurityProtocol.SSL.name) && consumerProps.containsKey(NewConsumerConfig.BOOTSTRAP_SERVERS_CONFIG)) {
           error(s"The configuration parameters `${ZKConfig.ZkConnectProp}` (old consumer) and " +
             s"`${NewConsumerConfig.BOOTSTRAP_SERVERS_CONFIG}` (new consumer) cannot be used together.")
           sys.exit(1)

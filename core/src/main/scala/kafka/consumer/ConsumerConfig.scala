@@ -18,12 +18,14 @@
 package kafka.consumer
 
 import java.util.Properties
-
 import kafka.api.OffsetRequest
-import kafka.common.{Config, InvalidConfigException}
 import kafka.utils._
-import kafka.common.{InvalidConfigException, Config}
+import kafka.common.{Config, InvalidConfigException}
 import java.util.Locale
+import org.apache.kafka.common.protocol.SecurityProtocol
+import org.apache.kafka.clients.CommonClientConfigs
+import org.apache.kafka.common.config.ConfigDef.{Importance, Type}
+import org.apache.kafka.common.config.{AbstractConfig, ConfigDef}
 
 @deprecated("This object has been deprecated and will be removed in a future release. " +
             "Please use org.apache.kafka.clients.consumer.ConsumerConfig instead.", "0.11.0.0")
@@ -58,6 +60,7 @@ object ConsumerConfig extends Config {
   val DefaultPartitionAssignmentStrategy = "range" /* select between "range", and "roundrobin" */
   val MirrorConsumerNumThreadsProp = "mirror.consumer.numthreads"
   val DefaultClientId = ""
+  val DefaultSecurityProtocol = SecurityProtocol.PLAINTEXT.name
 
   def validate(config: ConsumerConfig) {
     validateClientId(config.clientId)
@@ -103,7 +106,7 @@ object ConsumerConfig extends Config {
 @deprecated("This class has been deprecated and will be removed in a future release. " +
             "Please use org.apache.kafka.clients.consumer.ConsumerConfig instead.", "0.11.0.0")
 class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(props) {
-  import ConsumerConfig._
+  import kafka.consumer.ConsumerConfig._
 
   def this(originalProps: Properties) {
     this(new VerifiableProperties(originalProps))
@@ -199,6 +202,43 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
   /** Select a strategy for assigning partitions to consumer streams.
     *  Possible values: range, roundrobin, roundrobinv1, roundrobinv2, symmetric */
   val partitionAssignmentStrategy = props.getString("partition.assignment.strategy", DefaultPartitionAssignmentStrategy)
+
+  val securityProtocol = props.getString("security.protocol", DefaultSecurityProtocol)
+
+  val sslConfigs: Option[AbstractConfig] = if (securityProtocol == DefaultSecurityProtocol)
+    None
+  else {
+    val configDef = new ConfigDef()
+      .withClientSslSupport()
+      .define(
+        CommonClientConfigs.METRICS_NUM_SAMPLES_CONFIG,
+        Type.INT,
+        30000,
+        ConfigDef.Range.atLeast(0),
+        Importance.LOW,
+        CommonClientConfigs.METRICS_NUM_SAMPLES_CONFIG)
+      .define(
+        CommonClientConfigs.METRICS_SAMPLE_WINDOW_MS_CONFIG,
+        Type.LONG,
+        30000,
+        ConfigDef.Range.atLeast(0),
+        Importance.LOW,
+        CommonClientConfigs.METRICS_SAMPLE_WINDOW_MS_DOC)
+      .define(
+        CommonClientConfigs.METRIC_REPORTER_CLASSES_CONFIG,
+        Type.LIST,
+        "",
+        Importance.LOW,
+        CommonClientConfigs.METRIC_REPORTER_CLASSES_DOC)
+      .define(
+        CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG,
+        Type.LIST,
+        "",
+        Importance.HIGH,
+        CommonClientConfigs.BOOTSTRAP_SERVERS_DOC)
+
+    Some(new AbstractConfig(configDef, props.props, true))
+  }
 
   validate(this)
 }
