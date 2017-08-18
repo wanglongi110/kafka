@@ -22,7 +22,7 @@ import java.util.concurrent.CountDownLatch
 
 import org.apache.kafka.common.internals.FatalExitError
 
-abstract class ShutdownableThread(val name: String, val isInterruptible: Boolean = true)
+abstract class ShutdownableThread(val name: String, val isInterruptible: Boolean = true, val deathListener: Option[ThreadDeathListener] = None)
         extends Thread(name) with Logging {
   this.setDaemon(false)
   this.logIdent = "[" + name + "]: "
@@ -69,10 +69,20 @@ abstract class ShutdownableThread(val name: String, val isInterruptible: Boolean
         info("Stopped")
         Exit.exit(e.statusCode())
       case e: Throwable =>
-        if (isRunning.get())
+        if (isRunning.get()) {
           error("Error due to", e)
+          deathListener match {
+            case Some(listener) =>
+              listener.threadDied(this, e)
+            case None =>
+          }
+        }
     }
     shutdownLatch.countDown()
     info("Stopped")
   }
+}
+
+trait ThreadDeathListener {
+  def threadDied(thread: Thread, cause: Throwable)
 }

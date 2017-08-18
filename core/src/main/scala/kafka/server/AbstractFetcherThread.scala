@@ -19,7 +19,7 @@ package kafka.server
 
 import java.util.concurrent.locks.ReentrantLock
 import kafka.cluster.BrokerEndPoint
-import kafka.utils.{DelayedItem, Pool, ShutdownableThread}
+import kafka.utils.{DelayedItem, Pool, ShutdownableThread, ThreadDeathListener}
 import org.apache.kafka.common.errors.KafkaStorageException
 import kafka.common.{ClientIdAndBroker, KafkaException}
 import kafka.metrics.KafkaMetricsGroup
@@ -45,9 +45,10 @@ abstract class AbstractFetcherThread(name: String,
                                      val sourceBroker: BrokerEndPoint,
                                      fetchBackOffMs: Int = 0,
                                      isInterruptible: Boolean = true,
-                                     includeLogTruncation: Boolean
+                                     includeLogTruncation: Boolean,
+                                     deathListener: Option[ThreadDeathListener] = None
                                     )
-  extends ShutdownableThread(name, isInterruptible) {
+  extends ShutdownableThread(name, isInterruptible, deathListener) {
 
   type REQ <: FetchRequest
   type PD <: PartitionData

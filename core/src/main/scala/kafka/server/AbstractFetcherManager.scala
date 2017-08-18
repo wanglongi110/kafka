@@ -20,14 +20,14 @@ package kafka.server
 import scala.collection.mutable
 import scala.collection.Set
 import scala.collection.Map
-import kafka.utils.Logging
+import kafka.utils.{Logging, ThreadDeathListener}
 import kafka.cluster.BrokerEndPoint
 import kafka.metrics.KafkaMetricsGroup
 import com.yammer.metrics.core.Gauge
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.Utils
 
-abstract class AbstractFetcherManager(protected val name: String, clientId: String, numFetchers: Int = 1)
+abstract class AbstractFetcherManager(protected val name: String, clientId: String, numFetchers: Int = 1, val deathListener: Option[ThreadDeathListener] = None)
   extends Logging with KafkaMetricsGroup {
   // map of (source broker_id, fetcher_id per source broker) => fetcher
   private val fetcherThreadMap = new mutable.HashMap[BrokerIdAndFetcherId, AbstractFetcherThread]
@@ -81,7 +81,7 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
   }
 
   // to be defined in subclass to create a specific fetcher
-  def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): AbstractFetcherThread
+  def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, deathListener: Option[ThreadDeathListener]): AbstractFetcherThread
 
   def addFetcherForPartitions(partitionAndOffsets: Map[TopicPartition, BrokerAndInitialOffset]) {
     mapLock synchronized {
@@ -89,7 +89,7 @@ abstract class AbstractFetcherManager(protected val name: String, clientId: Stri
         BrokerAndFetcherId(brokerAndInitialOffset.broker, getFetcherId(topicPartition.topic, topicPartition.partition))}
 
       def addAndStartFetcherThread(brokerAndFetcherId: BrokerAndFetcherId, brokerIdAndFetcherId: BrokerIdAndFetcherId) {
-        val fetcherThread = createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker)
+        val fetcherThread = createFetcherThread(brokerAndFetcherId.fetcherId, brokerAndFetcherId.broker, deathListener)
         fetcherThreadMap.put(brokerIdAndFetcherId, fetcherThread)
         fetcherThread.start
       }

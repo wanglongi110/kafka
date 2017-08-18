@@ -87,7 +87,8 @@ private[kafka] object ZookeeperConsumerConnector {
 
 @deprecated("This class has been deprecated and will be removed in a future release.", "0.11.0.0")
 private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
-                                                val enableFetcher: Boolean) // for testing only
+                                                val enableFetcher: Boolean, // for testing only
+                                                val deathListener: Option[ThreadDeathListener] = None)
         extends ConsumerConnector with Logging with KafkaMetricsGroup {
 
   private val isShuttingDown = new AtomicBoolean(false)
@@ -156,7 +157,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
   KafkaMetricsReporter.startReporters(config.props)
   AppInfo.registerInfo()
 
-  def this(config: ConsumerConfig) = this(config, true)
+  def this(config: ConsumerConfig) = this(config, true, None)
 
   def createMessageStreams(topicCountMap: Map[String,Int]): Map[String, List[KafkaStream[Array[Byte],Array[Byte]]]] =
     createMessageStreams(topicCountMap, new DefaultDecoder(), new DefaultDecoder())
@@ -186,7 +187,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
 
   private def createFetcher() {
     if (enableFetcher)
-      fetcher = Some(new ConsumerFetcherManager(consumerIdString, config, zkUtils))
+      fetcher = Some(new ConsumerFetcherManager(consumerIdString, config, zkUtils, deathListener))
   }
 
   private def connectZk() {

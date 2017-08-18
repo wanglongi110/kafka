@@ -25,6 +25,7 @@ import kafka.common.{ErrorMapping, TopicAndPartition}
 
 import scala.collection.Map
 import ConsumerFetcherThread._
+import kafka.utils.ThreadDeathListener
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.record.MemoryRecords
@@ -36,13 +37,15 @@ class ConsumerFetcherThread(name: String,
                             val config: ConsumerConfig,
                             sourceBroker: BrokerEndPoint,
                             partitionMap: Map[TopicPartition, PartitionTopicInfo],
-                            val consumerFetcherManager: ConsumerFetcherManager)
+                            val consumerFetcherManager: ConsumerFetcherManager,
+                            deathListener: Option[ThreadDeathListener] = None)
         extends AbstractFetcherThread(name = name,
                                       clientId = config.clientId,
                                       sourceBroker = sourceBroker,
                                       fetchBackOffMs = config.refreshLeaderBackoffMs,
                                       isInterruptible = true,
-                                      includeLogTruncation = false) {
+                                      includeLogTruncation = false,
+                                      deathListener) {
 
   type REQ = FetchRequest
   type PD = PartitionData

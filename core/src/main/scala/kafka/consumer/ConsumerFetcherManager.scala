@@ -28,8 +28,7 @@ import scala.collection.mutable
 import java.util.concurrent.locks.ReentrantLock
 
 import kafka.utils.CoreUtils.inLock
-import kafka.utils.ZkUtils
-import kafka.utils.ShutdownableThread
+import kafka.utils.{ShutdownableThread, ThreadDeathListener, ZkUtils}
 import kafka.client.ClientUtils
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -41,9 +40,10 @@ import java.util.concurrent.atomic.AtomicInteger
 @deprecated("This class has been deprecated and will be removed in a future release.", "0.11.0.0")
 class ConsumerFetcherManager(private val consumerIdString: String,
                              private val config: ConsumerConfig,
-                             private val zkUtils : ZkUtils)
-        extends AbstractFetcherManager("ConsumerFetcherManager-%d".format(Time.SYSTEM.milliseconds),
-                                       config.clientId, config.numConsumerFetchers) {
+                             private val zkUtils : ZkUtils,
+                             deathListener: Option[ThreadDeathListener] = None)
+        extends AbstractFetcherManager("ConsumerFetcherManager-%d".format(System.currentTimeMillis()),
+                                       config.clientId, config.numConsumerFetchers, deathListener) {
   private var partitionMap: immutable.Map[TopicPartition, PartitionTopicInfo] = null
   private val noLeaderPartitionSet = new mutable.HashSet[TopicPartition]
   private val lock = new ReentrantLock
@@ -113,10 +113,10 @@ class ConsumerFetcherManager(private val consumerIdString: String,
     }
   }
 
-  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): AbstractFetcherThread = {
+  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, deathListener: Option[ThreadDeathListener]): AbstractFetcherThread = {
     new ConsumerFetcherThread(
       "ConsumerFetcherThread-%s-%d-%d".format(consumerIdString, fetcherId, sourceBroker.id),
-      config, sourceBroker, partitionMap, this)
+      config, sourceBroker, partitionMap, this, deathListener)
   }
 
   def startConnections(topicInfos: Iterable[PartitionTopicInfo], cluster: Cluster) {

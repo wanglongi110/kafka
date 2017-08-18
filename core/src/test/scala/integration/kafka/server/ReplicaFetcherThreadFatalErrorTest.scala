@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kafka.admin.AdminUtils
 import kafka.cluster.BrokerEndPoint
 import kafka.server.ReplicaFetcherThread.{FetchRequest, PartitionData}
-import kafka.utils.{Exit, TestUtils, ZkUtils}
+import kafka.utils.{Exit, TestUtils, ThreadDeathListener, ZkUtils}
 import kafka.utils.TestUtils.createBrokerConfigs
 import kafka.zk.ZooKeeperTestHarness
 import org.apache.kafka.common.TopicPartition
@@ -116,7 +116,7 @@ class ReplicaFetcherThreadFatalErrorTest extends ZooKeeperTestHarness {
           override protected def createReplicaFetcherManager(metrics: Metrics, time: Time, threadNamePrefix: Option[String],
                                                              quotaManager: ReplicationQuotaManager) =
             new ReplicaFetcherManager(config, this, metrics, time, threadNamePrefix, quotaManager) {
-              override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): AbstractFetcherThread = {
+              override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, deathListener: Option[ThreadDeathListener]): AbstractFetcherThread = {
                 val prefix = threadNamePrefix.map(tp => s"$tp:").getOrElse("")
                 val threadName = s"${prefix}ReplicaFetcherThread-$fetcherId-${sourceBroker.id}"
                 fetcherThread(FetcherThreadParams(threadName, fetcherId, sourceBroker, replicaManager, metrics,

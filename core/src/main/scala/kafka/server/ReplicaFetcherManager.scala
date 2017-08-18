@@ -18,6 +18,7 @@
 package kafka.server
 
 import kafka.cluster.BrokerEndPoint
+import kafka.utils.ThreadDeathListener
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.utils.Time
 
@@ -26,7 +27,7 @@ class ReplicaFetcherManager(brokerConfig: KafkaConfig, protected val replicaMana
       extends AbstractFetcherManager("ReplicaFetcherManager on broker " + brokerConfig.brokerId,
         "Replica", brokerConfig.numReplicaFetchers) {
 
-  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): AbstractFetcherThread = {
+  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint, deathListener: Option[ThreadDeathListener]): AbstractFetcherThread = {
     val prefix = threadNamePrefix.map(tp => s"${tp}:").getOrElse("")
     val threadName = s"${prefix}ReplicaFetcherThread-$fetcherId-${sourceBroker.id}"
     new ReplicaFetcherThread(threadName, fetcherId, sourceBroker, brokerConfig, replicaManager, metrics, time, quotaManager)

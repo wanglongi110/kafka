@@ -17,6 +17,7 @@
 package kafka.examples;
 
 import kafka.utils.ShutdownableThread;
+import kafka.utils.ThreadDeathListener;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
@@ -30,7 +31,7 @@ public class Consumer extends ShutdownableThread {
     private final String topic;
 
     public Consumer(String topic) {
-        super("KafkaConsumerExample", false);
+        super("KafkaConsumerExample", false, scala.Option.apply((ThreadDeathListener) null));
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KafkaProperties.KAFKA_SERVER_URL + ":" + KafkaProperties.KAFKA_SERVER_PORT);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "DemoConsumer");

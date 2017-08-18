@@ -29,9 +29,9 @@ import kafka.consumer.{BaseConsumer, BaseConsumerRecord, Blacklist, ConsumerIter
 import kafka.javaapi.consumer.ConsumerRebalanceListener
 import kafka.metrics.KafkaMetricsGroup
 import kafka.serializer.DefaultDecoder
-import kafka.utils.{CommandLineUtils, CoreUtils, Logging, ZKConfig}
+import kafka.utils._
 import org.apache.kafka.clients.consumer
-import org.apache.kafka.clients.consumer.{CommitFailedException, Consumer, ConsumerRecord, KafkaConsumer, OffsetAndMetadata}
+import org.apache.kafka.clients.consumer._
 import org.apache.kafka.clients.producer.internals.ErrorLoggingCallback
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord, RecordMetadata}
 import org.apache.kafka.common.TopicPartition
@@ -248,6 +248,19 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
       producerProps.setProperty(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer")
       producer = new MirrorMakerProducer(sync, producerProps)
 
+      val deathListener: ThreadDeathListener = new ThreadDeathListener {
+        override def threadDied(thread: Thread, cause: Throwable): Unit = {
+          try {
+            System.err.println("MM thread " + thread.getName + " died due to:")
+            cause.printStackTrace(System.err)
+            System.err.println("Halting")
+            System.err.flush()
+          } finally {
+            Runtime.getRuntime.halt(1)
+          }
+        }
+      }
+
       // Create consumers
       val mirrorMakerConsumers = if (useOldConsumer) {
         val customRebalanceListener: Option[ConsumerRebalanceListener] = {
@@ -268,7 +281,8 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
           consumerProps,
           customRebalanceListener,
           Option(options.valueOf(whitelistOpt)),
-          Option(options.valueOf(blacklistOpt)))
+          Option(options.valueOf(blacklistOpt)),
+          Some(deathListener))
       } else {
         val customRebalanceListener: Option[org.apache.kafka.clients.consumer.ConsumerRebalanceListener] = {
           val customRebalanceListenerClass = options.valueOf(consumerRebalanceListenerOpt)
@@ -321,7 +335,8 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
                                  consumerConfigProps: Properties,
                                  customRebalanceListener: Option[ConsumerRebalanceListener],
                                  whitelist: Option[String],
-                                 blacklist: Option[String]) : Seq[MirrorMakerBaseConsumer] = {
+                                 blacklist: Option[String],
+                                 deathListener: Option[ThreadDeathListener] = None) : Seq[MirrorMakerBaseConsumer] = {
     // Disable consumer auto offsets commit to prevent data loss.
     maybeSetDefaultProperty(consumerConfigProps, "auto.commit.enable", "false")
     // Set the consumer timeout so we will not block for low volume pipeline. The timeout is necessary to make sure
@@ -332,7 +347,7 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
     val connectors = (0 until numStreams) map { i =>
       consumerConfigProps.setProperty("client.id", groupIdString + "-" + i.toString)
       val consumerConfig = new OldConsumerConfig(consumerConfigProps)
-      new ZookeeperConsumerConnector(consumerConfig)
+      new ZookeeperConsumerConnector(consumerConfig, true, deathListener)
     }
 
     // create filters
