@@ -868,6 +868,9 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
       val partTopicInfoMap = currentTopicRegistry.getAndMaybePut(topic)
 
       val queue = topicThreadIdAndQueues.get((topic, consumerThreadId))
+      // HOTFIX: Avoid NPE if two topics are created back to back. See LIKAFKA-10614
+      if (queue == null)
+        return
       val consumedOffset = new AtomicLong(offset)
       val fetchedOffset = new AtomicLong(offset)
       val partTopicInfo = new PartitionTopicInfo(topic,
