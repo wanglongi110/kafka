@@ -61,6 +61,7 @@ object ConsumerConfig extends Config {
   val MirrorConsumerNumThreadsProp = "mirror.consumer.numthreads"
   val DefaultClientId = ""
   val DefaultSecurityProtocol = SecurityProtocol.PLAINTEXT.name
+  val DefaultShutdownOnSyncedRebalanceFailure = false
 
   def validate(config: ConsumerConfig) {
     validateClientId(config.clientId)
@@ -240,6 +241,8 @@ class ConsumerConfig private (val props: VerifiableProperties) extends ZKConfig(
     Some(new AbstractConfig(configDef, props.props, true))
   }
 
+  /** Whether to shutdown on synced rebalance failure */
+  val shutdownOnSyncedRebalanceFailure = props.getBoolean("shutdown.on.synced.rebalance.failure", DefaultShutdownOnSyncedRebalanceFailure)
   validate(this)
 }
 
