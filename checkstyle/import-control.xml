@@ -158,6 +158,7 @@
 
     <subpackage name="utils">
       <allow pkg="org.apache.kafka.common" />
+      <allow class="com.sun.management.HotSpotDiagnosticMXBean" />
     </subpackage>
   </subpackage>
 
@@ -238,7 +239,7 @@
     <subpackage name="perf">
       <allow pkg="com.fasterxml.jackson.databind" />
     </subpackage>
-    
+
     <subpackage name="integration">
       <allow pkg="kafka.admin" />
       <allow pkg="kafka.api" />
