@@ -89,6 +89,16 @@ class BrokerEndPointTest {
   }
 
   @Test
+  def testFromJsonV1WithEndPoints(): Unit = {
+    val brokerInfoStr = """{"jmx_port":9999,"timestamp":"100","endpoints":["PLAINTEXT://unittest.kafka.apache.org:9092","SSL://unittest.kafka.apache.org:9093"],"host":"unittest.kafka.apache.org","version":1,"port":9092,"rack":"2"}"""
+    val broker = Broker.createBroker(1, brokerInfoStr)
+    assertEquals(1, broker.id)
+    val brokerEndPoint = broker.getBrokerEndPoint(ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT))
+    assertEquals("unittest.kafka.apache.org", brokerEndPoint.host)
+    assertEquals(9092, brokerEndPoint.port)
+  }
+
+  @Test
   def testFromJsonV3(): Unit = {
     val json = """{
       "version":3,

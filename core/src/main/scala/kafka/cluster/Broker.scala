@@ -100,12 +100,15 @@ object Broker {
           val endpoints =
             if (version < 1)
               throw new KafkaException(s"Unsupported version of broker registration: $brokerInfoString")
-            else if (version == 1) {
+            else if (version == 1 && brokerInfo.get(EndpointsKey).isEmpty) {
               val host = brokerInfo(HostKey).to[String]
               val port = brokerInfo(PortKey).to[Int]
               val securityProtocol = SecurityProtocol.PLAINTEXT
               val endPoint = new EndPoint(host, port, ListenerName.forSecurityProtocol(securityProtocol), securityProtocol)
               Seq(endPoint)
+            } else if (version == 1) {
+              val listeners = brokerInfo(EndpointsKey).to[List[String]]
+              listeners.map(EndPoint.createEndPoint(_, None))
             }
             else {
               val securityProtocolMap = brokerInfo.get(ListenerSecurityProtocolMapKey).map(
