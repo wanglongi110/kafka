@@ -58,7 +58,7 @@ class SessionExpireListenerTest {
     val requestChannel = EasyMock.mock(classOf[RequestChannel])
     val zkUtils = ZkUtils(zkClient, isZkSecurityEnabled = false)
     import Watcher._
-    val healthcheck = new KafkaHealthcheck(brokerId, Seq.empty, zkUtils, None, ApiVersion.latestVersion, requestChannel, Long.MaxValue, time)
+    val healthcheck = new KafkaHealthcheck(brokerId, Seq.empty, zkUtils, None, ApiVersion.latestVersion, requestChannel, Long.MaxValue, time, null, 0)
 
     val expiresPerSecName = "ZooKeeperExpiresPerSec"
     val disconnectsPerSecName = "ZooKeeperDisconnectsPerSec"

@@ -139,6 +139,10 @@
       <allow class="org.apache.kafka.common.errors.SerializationException" />
       <allow class="org.apache.kafka.common.header.Headers" />
     </subpackage>
+
+    <subpackage name="utils">
+      <allow class="com.sun.management.HotSpotDiagnosticMXBean" />
+    </subpackage>
   </subpackage>
 
   <subpackage name="clients">
@@ -206,7 +210,7 @@
     <subpackage name="perf">
       <allow pkg="com.fasterxml.jackson.databind" />
     </subpackage>
-    
+
     <subpackage name="integration">
       <allow pkg="kafka.admin" />
       <allow pkg="kafka.api" />
@@ -281,7 +285,7 @@
     <subpackage name="converters">
       <allow pkg="org.apache.kafka.connect.storage" />
     </subpackage>
-    
+
     <subpackage name="runtime">
       <allow pkg="org.apache.kafka.connect" />
       <allow pkg="org.reflections"/>

@@ -17,6 +17,7 @@
 
 package kafka.server
 
+import java.io.File
 import java.util.Properties
 
 import kafka.api.{ApiVersion, KAFKA_0_10_0_IV1}
@@ -74,6 +75,8 @@ object Defaults {
   val MaxConnectionsPerIpOverrides: String = ""
   val ConnectionsMaxIdleMs = 10 * 60 * 1000L
   val RequestTimeoutMs = 30000
+  val HeapDumpFolder = "."
+  val HeapDumpTimeout = 30000
 
   /** ********* Log Configuration ***********/
   val NumPartitions = 1
@@ -243,6 +246,8 @@ object KafkaConfig {
   val QueuedMaxRequestsProp = "queued.max.requests"
   val QueuedMaxBytesProp = "queued.max.request.bytes"
   val RequestTimeoutMsProp = CommonClientConfigs.REQUEST_TIMEOUT_MS_CONFIG
+  val HeapDumpFolderProp = "heap.dump.folder"
+  val HeapDumpTimeoutProp = "heap.dump.timeout"
   /************* Authorizer Configuration ***********/
   val AuthorizerClassNameProp = "authorizer.class.name"
   /** ********* Socket Server Configuration ***********/
@@ -431,6 +436,8 @@ object KafkaConfig {
   val QueuedMaxRequestsDoc = "The number of queued requests allowed before blocking the network threads"
   val QueuedMaxRequestBytesDoc = "The number of queued bytes allowed before no more requests are read"
   val RequestTimeoutMsDoc = CommonClientConfigs.REQUEST_TIMEOUT_MS_DOC
+  val HeapDumpFolderDoc = "The Folder under which heap dumps will be written by the watchdog"
+  val HeapDumpTimeoutDoc = "The max amount of time (in millis) to wait for heap dump to complete before halting regardless"
   /************* Authorizer Configuration ***********/
   val AuthorizerClassNameDoc = "The authorizer class that should be used for authorization"
   /** ********* Socket Server Configuration ***********/
@@ -701,6 +708,8 @@ object KafkaConfig {
       .define(QueuedMaxRequestsProp, INT, Defaults.QueuedMaxRequests, atLeast(1), HIGH, QueuedMaxRequestsDoc)
       .define(QueuedMaxBytesProp, LONG, Defaults.QueuedMaxRequestBytes, MEDIUM, QueuedMaxRequestBytesDoc)
       .define(RequestTimeoutMsProp, INT, Defaults.RequestTimeoutMs, HIGH, RequestTimeoutMsDoc)
+      .define(HeapDumpFolderProp, STRING, Defaults.HeapDumpFolder, LOW, HeapDumpFolderDoc)
+      .define(HeapDumpTimeoutProp, LONG, Defaults.HeapDumpTimeout, LOW, HeapDumpTimeoutDoc)
 
       /************* Authorizer Configuration ***********/
       .define(AuthorizerClassNameProp, STRING, Defaults.AuthorizerClassName, LOW, AuthorizerClassNameDoc)
@@ -923,6 +932,8 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
   val numIoThreads = getInt(KafkaConfig.NumIoThreadsProp)
   val messageMaxBytes = getInt(KafkaConfig.MessageMaxBytesProp)
   val requestTimeoutMs = getInt(KafkaConfig.RequestTimeoutMsProp)
+  val heapDumpFolder = new File(getString(KafkaConfig.HeapDumpFolderProp))
+  val heapDumpTimeout = getLong(KafkaConfig.HeapDumpTimeoutProp)
 
   /************* Authorizer Configuration ***********/
   val authorizerClassName: String = getString(KafkaConfig.AuthorizerClassNameProp)

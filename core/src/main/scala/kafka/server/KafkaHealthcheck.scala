@@ -17,6 +17,7 @@
 
 package kafka.server
 
+import java.io.File
 import java.net.InetAddress
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -27,7 +28,7 @@ import kafka.metrics.KafkaMetricsGroup
 import kafka.network.RequestChannel
 import kafka.utils._
 import org.I0Itec.zkclient.IZkStateListener
-import org.apache.kafka.common.utils.Time
+import org.apache.kafka.common.utils.{PoisonPill, Time}
 import org.apache.kafka.common.protocol.SecurityProtocol
 import org.apache.zookeeper.Watcher.Event.KeeperState
 
@@ -46,7 +47,9 @@ class KafkaHealthcheck(brokerId: Int,
                        interBrokerProtocolVersion: ApiVersion,
                        requestChannel: RequestChannel,
                        requestProcessingMaxTimeMs: Long,
-                       time: Time) extends Logging {
+                       time: Time,
+                       heapDumpFolder: File,
+                       heapDumpTimeout: Long) extends Logging {
 
   private[server] val sessionExpireListener = new SessionExpireListener
   private val scheduler = new KafkaScheduler(threads = 1, threadNamePrefix = "kafka-healthcheck-scheduler-")
@@ -71,7 +74,7 @@ class KafkaHealthcheck(brokerId: Int,
     // will keep increasing even if there is no incoming request
     if (time.milliseconds - requestChannel.lastDequeueTimeMs > requestProcessingMaxTimeMs) {
       fatal(s"It has been more than $requestProcessingMaxTimeMs ms since the last time any io-thread reads from RequestChannel. Shutdown broker now.")
-      Runtime.getRuntime.halt(1)
+      PoisonPill.die(heapDumpFolder, heapDumpTimeout)
     }
   }
 

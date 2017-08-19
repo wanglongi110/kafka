@@ -17,6 +17,7 @@
 
 package kafka.tools
 
+import java.io.File
 import java.util
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
 import java.util.concurrent.{CountDownLatch, TimeUnit}
@@ -37,7 +38,7 @@ import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, Produce
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.protocol.SecurityProtocol
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
-import org.apache.kafka.common.utils.Utils
+import org.apache.kafka.common.utils.{PoisonPill, Utils}
 import org.apache.kafka.common.errors.WakeupException
 
 import scala.collection.JavaConverters._
@@ -172,6 +173,20 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
         .ofType(classOf[String])
         .defaultsTo("true")
 
+      val headDumpFolderOpt = parser.accepts("heap.dump.folder",
+        "Folder into which heap dumps will be written")
+        .withOptionalArg()
+        .describedAs("Folder into which heap dumps will be written")
+        .ofType(classOf[String])
+        .defaultsTo(".")
+
+      val headDumpTimeoutOpt = parser.accepts("heap.dump.timeout",
+        "Max amount of time (millis) to wait for heap dump before halting regardless. <=0 to disable")
+        .withOptionalArg()
+        .describedAs("Max amount of time (millis) to wait for heap dump before halting regardless. <=0 to disable")
+        .ofType(classOf[java.lang.Integer])
+        .defaultsTo(30000)
+
       val helpOpt = parser.accepts("help", "Print this message.")
 
       if (args.length == 0)
@@ -187,6 +202,8 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
 
       CommandLineUtils.checkRequiredArgs(parser, options, consumerConfigOpt, producerConfigOpt)
 
+      val heapDumpFolder : File = new File(options.valueOf(headDumpFolderOpt))
+      val heapDumpTimeout = options.valueOf(headDumpTimeoutOpt)
       val consumerProps = Utils.loadProps(options.valueOf(consumerConfigOpt))
       val useOldConsumer = consumerProps.containsKey(ZKConfig.ZkConnectProp)
 
@@ -255,10 +272,9 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
           try {
             System.err.println("MM thread " + thread.getName + " died due to:")
             cause.printStackTrace(System.err)
-            System.err.println("Halting")
             System.err.flush()
           } finally {
-            Runtime.getRuntime.halt(1)
+            PoisonPill.die(heapDumpFolder, heapDumpTimeout.intValue())
           }
         }
       }
