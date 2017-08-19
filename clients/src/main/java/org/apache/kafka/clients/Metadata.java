@@ -83,11 +83,17 @@ public class Metadata implements Closeable {
     private final boolean topicExpiryEnabled;
     private boolean isClosed;
     private final Map<TopicPartition, Integer> lastSeenLeaderEpochs;
+    private final long topicExpiryMs;
 
     public Metadata(long refreshBackoffMs,
                     long metadataExpireMs,
                     boolean allowAutoTopicCreation) {
         this(refreshBackoffMs, metadataExpireMs, allowAutoTopicCreation, false, new ClusterResourceListeners());
+    }
+
+    public Metadata(long refreshBackoffMs, long metadataExpireMs, boolean allowAutoTopicCreation,
+                    boolean topicExpiryEnabled, ClusterResourceListeners clusterResourceListeners) {
+        this(refreshBackoffMs, metadataExpireMs, allowAutoTopicCreation, topicExpiryEnabled, clusterResourceListeners, TOPIC_EXPIRY_MS);
     }
 
     /**
@@ -100,11 +106,13 @@ public class Metadata implements Closeable {
      * @param topicExpiryEnabled If true, enable expiry of unused topics
      * @param clusterResourceListeners List of ClusterResourceListeners which will receive metadata updates.
      */
+
     public Metadata(long refreshBackoffMs,
                     long metadataExpireMs,
                     boolean allowAutoTopicCreation,
                     boolean topicExpiryEnabled,
-                    ClusterResourceListeners clusterResourceListeners) {
+                    ClusterResourceListeners clusterResourceListeners,
+                    long topicExpiryMs) {
         this.refreshBackoffMs = refreshBackoffMs;
         this.metadataExpireMs = metadataExpireMs;
         this.allowAutoTopicCreation = allowAutoTopicCreation;
@@ -120,6 +128,7 @@ public class Metadata implements Closeable {
         this.needMetadataForAllTopics = false;
         this.isClosed = false;
         this.lastSeenLeaderEpochs = new HashMap<>();
+        this.topicExpiryMs = topicExpiryMs;
     }
 
     /**
@@ -351,9 +360,9 @@ public class Metadata implements Closeable {
             for (Iterator<Map.Entry<String, Long>> it = topics.entrySet().iterator(); it.hasNext(); ) {
                 Map.Entry<String, Long> entry = it.next();
                 long expireMs = entry.getValue();
-                if (expireMs == TOPIC_EXPIRY_NEEDS_UPDATE)
-                    entry.setValue(now + TOPIC_EXPIRY_MS);
-                else if (expireMs <= now) {
+                if (expireMs == TOPIC_EXPIRY_NEEDS_UPDATE) {
+                    entry.setValue(Long.MAX_VALUE - now > topicExpiryMs ? now + topicExpiryMs : Long.MAX_VALUE);
+                } else if (expireMs <= now) {
                     it.remove();
                     log.debug("Removing unused topic {} from the metadata list, expiryMs {} now {}", entry.getKey(), expireMs, now);
                 }
