@@ -22,17 +22,20 @@ ext {
   libs = [:]
   
   // Enabled by default when commands like `testAll` are invoked
-  defaultScalaVersions = [ '2.11' ]
+  defaultScalaVersions = [ '2.10' ]
   // Available if -PscalaVersion is used, this is necessary because Scala 2.12 requires Java 8 while Kafka is usually
   // built with Java 7
-  availableScalaVersions = [ '2.11', '2.12' ]
+  availableScalaVersions = [ '2.10', '2.11', '2.12' ]
 }
 
 // Add Scala version
+def defaultScala210Version = '2.10.6'
 def defaultScala211Version = '2.11.11'
 def defaultScala212Version = '2.12.3'
 if (hasProperty('scalaVersion')) {
-  if (scalaVersion == '2.11') {
+  if (scalaVersion == '2.10') {
+    versions["scala"] = defaultScala210Version
+  } else if (scalaVersion == '2.11') {
     versions["scala"] = defaultScala211Version
   } else if (scalaVersion == '2.12') {
     versions["scala"] = defaultScala212Version
@@ -40,7 +43,7 @@ if (hasProperty('scalaVersion')) {
     versions["scala"] = scalaVersion
   }
 } else {
-  versions["scala"] = defaultScala211Version
+  versions["scala"] = defaultScala210Version
 }
 
 // Add base Scala version

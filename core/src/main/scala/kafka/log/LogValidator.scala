@@ -79,7 +79,7 @@ private[kafka] object LogValidator extends Logging {
       if (batch.isControlBatch)
         throw new InvalidRecordException("Clients are not allowed to write control records")
 
-      if (Option(batch.countOrNull).contains(0))
+      if (Option(batch.countOrNull) == Some(0))
         throw new InvalidRecordException("Record batches must contain at least one record")
     }
 

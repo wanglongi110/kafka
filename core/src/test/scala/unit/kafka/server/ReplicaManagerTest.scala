@@ -488,11 +488,11 @@ class ReplicaManagerTest {
     EasyMock.replay(metadataCache)
 
     val mockProducePurgatory = new DelayedOperationPurgatory[DelayedProduce](
-      purgatoryName = "Produce", timer, reaperEnabled = false)
+      "Produce", timer, 0, 1000, reaperEnabled = false)
     val mockFetchPurgatory = new DelayedOperationPurgatory[DelayedFetch](
-      purgatoryName = "Fetch", timer, reaperEnabled = false)
+      "Fetch", timer, 0, 1000, reaperEnabled = false)
     val mockDeleteRecordsPurgatory = new DelayedOperationPurgatory[DelayedDeleteRecords](
-      purgatoryName = "DeleteRecords", timer, reaperEnabled = false)
+      "DeleteRecords", timer, 0, 1000, reaperEnabled = false)
 
     new ReplicaManager(config, metrics, time, zkUtils, new MockScheduler(time), mockLogMgr,
       new AtomicBoolean(false), QuotaFactory.instantiate(config, metrics, time).follower, new BrokerTopicStats,
