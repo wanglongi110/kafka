@@ -42,6 +42,11 @@ public final class RecordMetadata {
 
     private volatile Long checksum;
 
+    @Deprecated
+    public RecordMetadata(TopicPartition topicPartition, long baseOffset, long relativeOffset) {
+        this(topicPartition, baseOffset, relativeOffset, -1L, -1L, -1, -1);
+    }
+
     public RecordMetadata(TopicPartition topicPartition, long baseOffset, long relativeOffset, long timestamp,
                           Long checksum, int serializedKeySize, int serializedValueSize) {
         // ignore the relativeOffset if the base offset is -1,
