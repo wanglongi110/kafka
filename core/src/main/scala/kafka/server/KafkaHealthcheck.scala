@@ -24,16 +24,18 @@ import java.util.concurrent.TimeUnit
 import kafka.api.ApiVersion
 import kafka.cluster.EndPoint
 import kafka.metrics.KafkaMetricsGroup
+import kafka.network.RequestChannel
 import kafka.utils._
 import org.I0Itec.zkclient.IZkStateListener
+import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.protocol.SecurityProtocol
 import org.apache.zookeeper.Watcher.Event.KeeperState
 
 /**
- * This class registers the broker in zookeeper to allow 
+ * This class registers the broker in zookeeper to allow
  * other brokers and consumers to detect failures. It uses an ephemeral znode with the path:
  *   /brokers/ids/[0...N] --> advertisedHost:advertisedPort
- *   
+ *
  * Right now our definition of health is fairly naive. If we register in zk we are healthy, otherwise
  * we are dead.
  */
@@ -41,13 +43,36 @@ class KafkaHealthcheck(brokerId: Int,
                        advertisedEndpoints: Seq[EndPoint],
                        zkUtils: ZkUtils,
                        rack: Option[String],
-                       interBrokerProtocolVersion: ApiVersion) extends Logging {
+                       interBrokerProtocolVersion: ApiVersion,
+                       requestChannel: RequestChannel,
+                       requestProcessingMaxTimeMs: Long,
+                       time: Time) extends Logging {
 
   private[server] val sessionExpireListener = new SessionExpireListener
+  private val scheduler = new KafkaScheduler(threads = 1, threadNamePrefix = "kafka-healthcheck-scheduler-")
 
   def startup() {
     zkUtils.subscribeStateChanges(sessionExpireListener)
     register()
+    scheduler.startup()
+    scheduler.schedule(name = "halt-broker-if-not-healthy",
+                       fun = haltIfNotHealthy,
+                       period = 10000,
+                       unit = TimeUnit.MILLISECONDS)
+  }
+
+  def shutdown() = {
+    scheduler.shutdown()
+    zkUtils.zkClient.unsubscribeStateChanges(sessionExpireListener)
+  }
+
+  private def haltIfNotHealthy() {
+    // This relies on io-thread to receive request from RequestChannel with 300 ms timeout, so that lastDequeueTimeMs
+    // will keep increasing even if there is no incoming request
+    if (time.milliseconds - requestChannel.lastDequeueTimeMs > requestProcessingMaxTimeMs) {
+      fatal(s"It has been more than $requestProcessingMaxTimeMs ms since the last time any io-thread reads from RequestChannel. Shutdown broker now.")
+      Runtime.getRuntime.halt(1)
+    }
   }
 
   /**

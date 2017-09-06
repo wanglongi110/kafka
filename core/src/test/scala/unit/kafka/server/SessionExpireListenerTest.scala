@@ -18,8 +18,10 @@
 package kafka.server
 
 import kafka.api.ApiVersion
+import kafka.network.RequestChannel
 import kafka.utils.ZkUtils
 import org.I0Itec.zkclient.ZkClient
+import org.apache.kafka.common.utils.MockTime
 import org.apache.zookeeper.Watcher
 import org.easymock.EasyMock
 import org.junit.{Assert, Test}
@@ -30,6 +32,7 @@ import scala.collection.JavaConverters._
 
 class SessionExpireListenerTest {
 
+  private var time = new MockTime
   private val brokerId = 1
 
   private def cleanMetricsRegistry() {
@@ -52,9 +55,10 @@ class SessionExpireListenerTest {
     }
 
     val zkClient = EasyMock.mock(classOf[ZkClient])
+    val requestChannel = EasyMock.mock(classOf[RequestChannel])
     val zkUtils = ZkUtils(zkClient, isZkSecurityEnabled = false)
     import Watcher._
-    val healthcheck = new KafkaHealthcheck(brokerId, Seq.empty, zkUtils, None, ApiVersion.latestVersion)
+    val healthcheck = new KafkaHealthcheck(brokerId, Seq.empty, zkUtils, None, ApiVersion.latestVersion, requestChannel, Long.MaxValue, time)
 
     val expiresPerSecName = "ZooKeeperExpiresPerSec"
     val disconnectsPerSecName = "ZooKeeperDisconnectsPerSec"

@@ -280,7 +280,7 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
             endpoint
         }
         kafkaHealthcheck = new KafkaHealthcheck(config.brokerId, listeners, zkUtils, config.rack,
-          config.interBrokerProtocolVersion)
+          config.interBrokerProtocolVersion, socketServer.requestChannel, config.requestMaxLocalTimeMs, time)
         kafkaHealthcheck.startup()
 
         // Now that the broker id is successfully registered via KafkaHealthcheck, checkpoint it
@@ -507,6 +507,8 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
         CoreUtils.swallow(controlledShutdown())
         brokerState.newState(BrokerShuttingDown)
 
+        if (kafkaHealthcheck != null)
+          CoreUtils.swallow(kafkaHealthcheck.shutdown())
         if (socketServer != null)
           CoreUtils.swallow(socketServer.shutdown())
         if (requestHandlerPool != null)

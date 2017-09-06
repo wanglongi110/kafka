@@ -69,6 +69,7 @@ object Defaults {
   val SocketSendBufferBytes: Int = 100 * 1024
   val SocketReceiveBufferBytes: Int = 100 * 1024
   val SocketRequestMaxBytes: Int = 100 * 1024 * 1024
+  val RequestMaxLocalTimeMs = Long.MaxValue
   val MaxConnectionsPerIp: Int = Int.MaxValue
   val MaxConnectionsPerIpOverrides: String = ""
   val ConnectionsMaxIdleMs = 10 * 60 * 1000L
@@ -255,6 +256,7 @@ object KafkaConfig {
   val SocketSendBufferBytesProp = "socket.send.buffer.bytes"
   val SocketReceiveBufferBytesProp = "socket.receive.buffer.bytes"
   val SocketRequestMaxBytesProp = "socket.request.max.bytes"
+  val RequestMaxLocalTimeMsProp = "request.max.local.time.ms"
   val MaxConnectionsPerIpProp = "max.connections.per.ip"
   val MaxConnectionsPerIpOverridesProp = "max.connections.per.ip.overrides"
   val ConnectionsMaxIdleMsProp = "connections.max.idle.ms"
@@ -468,6 +470,9 @@ object KafkaConfig {
   val SocketSendBufferBytesDoc = "The SO_SNDBUF buffer of the socket sever sockets. If the value is -1, the OS default will be used."
   val SocketReceiveBufferBytesDoc = "The SO_RCVBUF buffer of the socket sever sockets. If the value is -1, the OS default will be used."
   val SocketRequestMaxBytesDoc = "The maximum number of bytes in a socket request"
+  val RequestMaxLocalTimeMsDoc = "The maximum allowable request local processing time. If a request's local processing " +
+    "takes longer than this time the broker will kill itself as violating this timeout is a symptom of a more serious broker zombie state." +
+    " It is useful to observe the RequestDequeuePollIntervalMs metric to find a suitable setting for this configuration."
   val MaxConnectionsPerIpDoc = "The maximum number of connections we allow from each ip address"
   val MaxConnectionsPerIpOverridesDoc = "Per-ip or hostname overrides to the default maximum number of connections"
   val ConnectionsMaxIdleMsDoc = "Idle connections timeout: the server socket processor threads close the connections that idle more than this"
@@ -711,6 +716,7 @@ object KafkaConfig {
       .define(SocketSendBufferBytesProp, INT, Defaults.SocketSendBufferBytes, HIGH, SocketSendBufferBytesDoc)
       .define(SocketReceiveBufferBytesProp, INT, Defaults.SocketReceiveBufferBytes, HIGH, SocketReceiveBufferBytesDoc)
       .define(SocketRequestMaxBytesProp, INT, Defaults.SocketRequestMaxBytes, atLeast(1), HIGH, SocketRequestMaxBytesDoc)
+      .define(RequestMaxLocalTimeMsProp, LONG, Defaults.RequestMaxLocalTimeMs, atLeast(1), MEDIUM, RequestMaxLocalTimeMsDoc)
       .define(MaxConnectionsPerIpProp, INT, Defaults.MaxConnectionsPerIp, atLeast(1), MEDIUM, MaxConnectionsPerIpDoc)
       .define(MaxConnectionsPerIpOverridesProp, STRING, Defaults.MaxConnectionsPerIpOverrides, MEDIUM, MaxConnectionsPerIpOverridesDoc)
       .define(ConnectionsMaxIdleMsProp, LONG, Defaults.ConnectionsMaxIdleMs, MEDIUM, ConnectionsMaxIdleMsDoc)
@@ -930,6 +936,7 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
   val socketSendBufferBytes = getInt(KafkaConfig.SocketSendBufferBytesProp)
   val socketReceiveBufferBytes = getInt(KafkaConfig.SocketReceiveBufferBytesProp)
   val socketRequestMaxBytes = getInt(KafkaConfig.SocketRequestMaxBytesProp)
+  val requestMaxLocalTimeMs = getLong(KafkaConfig.RequestMaxLocalTimeMsProp)
   val maxConnectionsPerIp = getInt(KafkaConfig.MaxConnectionsPerIpProp)
   val maxConnectionsPerIpOverrides: Map[String, Int] =
     getMap(KafkaConfig.MaxConnectionsPerIpOverridesProp, getString(KafkaConfig.MaxConnectionsPerIpOverridesProp)).map { case (k, v) => (k, v.toInt)}

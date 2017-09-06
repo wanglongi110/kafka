@@ -20,7 +20,6 @@ package kafka.network
 import java.net.InetAddress
 import java.nio.ByteBuffer
 import java.util.concurrent._
-
 import com.yammer.metrics.core.Gauge
 import kafka.metrics.KafkaMetricsGroup
 import kafka.network.RequestChannel.{ShutdownRequest, BaseRequest}
@@ -198,10 +197,15 @@ object RequestChannel extends Logging {
   case object CloseConnectionAction extends ResponseAction
 }
 
-class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMetricsGroup {
+class RequestChannel(val numProcessors: Int, val queueSize: Int, val time: Time) extends KafkaMetricsGroup {
   private var responseListeners: List[(Int) => Unit] = Nil
   private val requestQueue = new ArrayBlockingQueue[BaseRequest](queueSize)
   private val responseQueues = new Array[BlockingQueue[RequestChannel.Response]](numProcessors)
+  @volatile var lastDequeueTimeMs = time.milliseconds
+  // This metric can help user select a suitable threshold for requestMaxLocalTimeMs so that broker can shutdown itself only when it
+  // is stuck or too slow. A suggested value of requestMaxLocalTimeMs could be twice the 999'th percentile of the RequestDequeuePollIntervalMs.
+  private val requestDequeuePollIntervalMs = newHistogram("RequestDequeuePollIntervalMs")
+
   for(i <- 0 until numProcessors)
     responseQueues(i) = new LinkedBlockingQueue[RequestChannel.Response]()
 
@@ -244,12 +248,20 @@ class RequestChannel(val numProcessors: Int, val queueSize: Int) extends KafkaMe
   }
 
   /** Get the next request or block until specified time has elapsed */
-  def receiveRequest(timeout: Long): RequestChannel.BaseRequest =
+  def receiveRequest(timeout: Long): RequestChannel.BaseRequest = {
+    val curTime = time.milliseconds
+    requestDequeuePollIntervalMs.update(curTime - lastDequeueTimeMs)
+    lastDequeueTimeMs = curTime
     requestQueue.poll(timeout, TimeUnit.MILLISECONDS)
+  }
 
   /** Get the next request or block until there is one */
-  def receiveRequest(): RequestChannel.BaseRequest =
+  def receiveRequest(): RequestChannel.BaseRequest = {
+    val curTime = time.milliseconds
+    requestDequeuePollIntervalMs.update(curTime - lastDequeueTimeMs)
+    lastDequeueTimeMs = curTime
     requestQueue.take()
+  }
 
   /** Get a response for the given processor if there is one */
   def receiveResponse(processor: Int): RequestChannel.Response = {

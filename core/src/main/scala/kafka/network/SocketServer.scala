@@ -68,7 +68,7 @@ class SocketServer(val config: KafkaConfig, val metrics: Metrics, val time: Time
   private val memoryPoolDepletedPercentMetricName = metrics.metricName("MemoryPoolAvgDepletedPercent", "socket-server-metrics")
   memoryPoolSensor.add(memoryPoolDepletedPercentMetricName, new Rate(TimeUnit.MILLISECONDS))
   private val memoryPool = if (config.queuedMaxBytes > 0) new SimpleMemoryPool(config.queuedMaxBytes, config.socketRequestMaxBytes, false, memoryPoolSensor) else MemoryPool.NONE
-  val requestChannel = new RequestChannel(totalProcessorThreads, maxQueuedRequests)
+  val requestChannel = new RequestChannel(totalProcessorThreads, maxQueuedRequests, time)
   private val processors = new Array[Processor](totalProcessorThreads)
 
   private[network] val acceptors = mutable.Map[EndPoint, Acceptor]()
