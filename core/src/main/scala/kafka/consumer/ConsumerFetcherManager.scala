@@ -28,6 +28,7 @@ import scala.collection.immutable
 import collection.mutable.HashMap
 import scala.collection.mutable
 import java.util.concurrent.locks.ReentrantLock
+import scala.collection.JavaConversions._
 
 import kafka.utils.CoreUtils.inLock
 import kafka.utils.{ShutdownableThread, ThreadDeathListener, ZkUtils}
@@ -56,8 +57,8 @@ class ConsumerFetcherManager(private val consumerIdString: String,
 
   private val isSSL = config.sslConfigs.isDefined
   private val metadataNetworkClientOpt = config.sslConfigs.map(sslConfigs => {
-    val addresses = org.apache.kafka.clients.ClientUtils.parseAndValidateAddresses(
-      sslConfigs.getList(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG))
+    val bootstrapServers = seqAsJavaList(ClientUtils.getSslBrokerEndPoints(zkUtils).map(_.connectionString))
+    val addresses = org.apache.kafka.clients.ClientUtils.parseAndValidateAddresses(bootstrapServers)
     val bootstrapNodes = JCluster.bootstrap(addresses).nodes
     val metadataUpdater = new ManualMetadataUpdater()
     metadataUpdater.setNodes(bootstrapNodes)
