@@ -127,14 +127,26 @@ object ClientUtils extends Logging {
    /**
     * Returns the first end point from each broker with the PLAINTEXT security protocol.
     */
-  def getPlaintextBrokerEndPoints(zkUtils: ZkUtils): Seq[BrokerEndPoint] = {
-    zkUtils.getAllBrokersInCluster().map { broker =>
-      broker.endPoints.collectFirst {
-        case endPoint if endPoint.securityProtocol == SecurityProtocol.PLAINTEXT =>
-          new BrokerEndPoint(broker.id, endPoint.host, endPoint.port)
-      }.getOrElse(throw new BrokerEndPointNotAvailableException(s"End point with security protocol PLAINTEXT not found for broker ${broker.id}"))
-    }
-  }
+   def getPlaintextBrokerEndPoints(zkUtils: ZkUtils): Seq[BrokerEndPoint] = {
+     zkUtils.getAllBrokersInCluster().map { broker =>
+       broker.endPoints.collectFirst {
+         case endPoint if endPoint.securityProtocol == SecurityProtocol.PLAINTEXT =>
+           new BrokerEndPoint(broker.id, endPoint.host, endPoint.port)
+       }.getOrElse(throw new BrokerEndPointNotAvailableException(s"End point with security protocol PLAINTEXT not found for broker ${broker.id}"))
+     }
+   }
+
+   /**
+     * Returns the first end point from each broker with the SSL security protocol
+     */
+   def getSslBrokerEndPoints(zkUtils: ZkUtils): Seq[BrokerEndPoint] = {
+     zkUtils.getAllBrokersInCluster().map { broker =>
+       broker.endPoints.collectFirst {
+         case endPoint if endPoint.securityProtocol == SecurityProtocol.SSL =>
+           new BrokerEndPoint(broker.id, endPoint.host, endPoint.port)
+       }.getOrElse(throw new BrokerEndPointNotAvailableException(s"End point with security protocol SSL not found for broker ${broker.id}"))
+     }
+   }
 
    /**
     * Creates a blocking channel to the offset manager of the given group
