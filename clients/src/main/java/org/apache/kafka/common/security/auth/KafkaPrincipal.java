@@ -25,13 +25,19 @@ public class KafkaPrincipal implements Principal {
 
     private String principalType;
     private String name;
+    private Principal channelPrincipal;
 
-    public KafkaPrincipal(String principalType, String name) {
+    public KafkaPrincipal(String principalType, String name, Principal channelPrincipal) {
         if (principalType == null || name == null) {
             throw new IllegalArgumentException("principalType and name can not be null");
         }
         this.principalType = principalType;
         this.name = name;
+        this.channelPrincipal = channelPrincipal;
+    }
+
+    public KafkaPrincipal(String principalType, String name) {
+        this(principalType, name, null);
     }
 
     public static KafkaPrincipal fromString(String str) {
@@ -45,7 +51,7 @@ public class KafkaPrincipal implements Principal {
             throw new IllegalArgumentException("expected a string in format principalType:principalName but got " + str);
         }
 
-        return new KafkaPrincipal(split[0], split[1]);
+        return new KafkaPrincipal(split[0], split[1], null);
     }
 
     @Override
@@ -79,6 +85,10 @@ public class KafkaPrincipal implements Principal {
 
     public String getPrincipalType() {
         return principalType;
+    }
+
+    public Principal getChannelPrincipal() {
+        return this.channelPrincipal;
     }
 }
 

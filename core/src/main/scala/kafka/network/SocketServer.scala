@@ -539,7 +539,7 @@ private[kafka] class Processor(val id: Int,
         val openChannel = selector.channel(receive.source)
         // Only methods that are safe to call on a disconnected channel should be invoked on 'openOrClosingChannel'.
         val openOrClosingChannel = if (openChannel != null) openChannel else selector.closingChannel(receive.source)
-        val principal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, openOrClosingChannel.principal.getName)
+        val principal = new KafkaPrincipal(KafkaPrincipal.USER_TYPE, openOrClosingChannel.principal.getName, openOrClosingChannel.principal())
         val header = RequestHeader.parse(receive.payload)
         val context = new RequestContext(header, receive.source, openOrClosingChannel.socketAddress,
           principal, listenerName, securityProtocol)
