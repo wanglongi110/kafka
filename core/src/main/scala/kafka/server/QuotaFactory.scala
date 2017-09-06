@@ -19,6 +19,7 @@ package kafka.server
 import kafka.server.QuotaType._
 import kafka.utils.Logging
 import org.apache.kafka.common.TopicPartition
+import kafka.utils.KafkaScheduler
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.utils.Time
 
@@ -47,9 +48,13 @@ object QuotaFactory extends Logging {
   }
 
   def instantiate(cfg: KafkaConfig, metrics: Metrics, time: Time): QuotaManagers = {
+    instantiate(cfg, metrics, time, None)
+  }
+
+  def instantiate(cfg: KafkaConfig, metrics: Metrics, time: Time, schedulerOpt: Option[KafkaScheduler]): QuotaManagers = {
     QuotaManagers(
-      new ClientQuotaManager(clientFetchConfig(cfg), metrics, Fetch, time),
-      new ClientQuotaManager(clientProduceConfig(cfg), metrics, Produce, time),
+      new ClientQuotaManager(clientFetchConfig(cfg), metrics, Fetch, time, schedulerOpt),
+      new ClientQuotaManager(clientProduceConfig(cfg), metrics, Produce, time, schedulerOpt),
       new ClientRequestQuotaManager(clientRequestConfig(cfg), metrics, time),
       new ReplicationQuotaManager(replicationConfig(cfg), metrics, LeaderReplication, time),
       new ReplicationQuotaManager(replicationConfig(cfg), metrics, FollowerReplication, time)

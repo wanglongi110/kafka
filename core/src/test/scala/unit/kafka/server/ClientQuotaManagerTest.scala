@@ -18,16 +18,18 @@ package kafka.server
 
 import java.util.Collections
 
+import kafka.utils.KafkaScheduler
 import org.apache.kafka.common.metrics.{MetricConfig, Metrics, Quota}
 import org.apache.kafka.common.utils.MockTime
 import org.junit.Assert.{assertEquals, assertTrue}
-import org.junit.{Before, Test}
+import org.junit.{Before, After, Test}
 import kafka.admin.ConfigCommand
 
 class ClientQuotaManagerTest {
   private val time = new MockTime
 
   private val config = ClientQuotaManagerConfig(quotaBytesPerSecondDefault = 500)
+  private val scheduler = new KafkaScheduler(1)
 
   var numCallbacks: Int = 0
   def callback(delayTimeMs: Int) {
@@ -37,10 +39,16 @@ class ClientQuotaManagerTest {
   @Before
   def beforeMethod() {
     numCallbacks = 0
+    scheduler.startup()
+  }
+
+  @After
+  def afterClass() {
+    scheduler.shutdown()
   }
 
   private def testQuotaParsing(config: ClientQuotaManagerConfig, client1: UserClient, client2: UserClient, randomClient: UserClient, defaultConfigClient: UserClient) {
-    val clientMetrics = new ClientQuotaManager(config, newMetrics, QuotaType.Produce, time)
+    val clientMetrics = new ClientQuotaManager(config, newMetrics, QuotaType.Produce, time, Some(scheduler))
 
     try {
       // Case 1: Update the quota. Assert that the new quota value is returned
@@ -150,7 +158,7 @@ class ClientQuotaManagerTest {
 
   @Test
   def testQuotaConfigPrecedence() {
-    val quotaManager = new ClientQuotaManager(ClientQuotaManagerConfig(quotaBytesPerSecondDefault=Long.MaxValue), newMetrics, QuotaType.Produce, time)
+    val quotaManager = new ClientQuotaManager(ClientQuotaManagerConfig(quotaBytesPerSecondDefault=Long.MaxValue), newMetrics, QuotaType.Produce, time, Some(scheduler))
 
     def checkQuota(user: String, clientId: String, expectedBound: Int, value: Int, expectThrottle: Boolean) {
       assertEquals(new Quota(expectedBound, true), quotaManager.quota(user, clientId))
@@ -223,8 +231,8 @@ class ClientQuotaManagerTest {
   @Test
   def testQuotaViolation() {
     val metrics = newMetrics
-    val clientMetrics = new ClientQuotaManager(config, metrics, QuotaType.Produce, time)
-    val queueSizeMetric = metrics.metrics().get(metrics.metricName("queue-size", "Produce", ""))
+    val clientMetrics = new ClientQuotaManager(config, metrics, QuotaType.Produce, time, Some(scheduler))
+    val queueSizeMetric = metrics.metrics().get(metrics.metricName("queue-size", "producer", ""))
     try {
       /* We have 10 second windows. Make sure that there is no quota violation
        * if we produce under the quota
@@ -333,7 +341,7 @@ class ClientQuotaManagerTest {
   @Test
   def testExpireThrottleTimeSensor() {
     val metrics = newMetrics
-    val clientMetrics = new ClientQuotaManager(config, metrics, QuotaType.Produce, time)
+    val clientMetrics = new ClientQuotaManager(config, metrics, QuotaType.Produce, time, Some(scheduler))
     try {
       clientMetrics.maybeRecordAndThrottle("ANONYMOUS", "client1", 100, callback)
       // remove the throttle time sensor
@@ -352,7 +360,7 @@ class ClientQuotaManagerTest {
   @Test
   def testExpireQuotaSensors() {
     val metrics = newMetrics
-    val clientMetrics = new ClientQuotaManager(config, metrics, QuotaType.Produce, time)
+    val clientMetrics = new ClientQuotaManager(config, metrics, QuotaType.Produce, time, Some(scheduler))
     try {
       clientMetrics.maybeRecordAndThrottle("ANONYMOUS", "client1", 100, callback)
       // remove all the sensors

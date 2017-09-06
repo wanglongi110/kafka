@@ -21,9 +21,10 @@ package kafka.server
 import java.util.Collections
 import java.util.concurrent.{DelayQueue, TimeUnit}
 
+import kafka.utils.KafkaScheduler
 import org.apache.kafka.common.metrics.MetricConfig
 import org.apache.kafka.common.utils.MockTime
-import org.junit.{Assert, Before, Test}
+import org.junit._
 
 class ThrottledResponseExpirationTest {
   private val time = new MockTime
@@ -31,19 +32,26 @@ class ThrottledResponseExpirationTest {
   private val metrics = new org.apache.kafka.common.metrics.Metrics(new MetricConfig(),
                                                                     Collections.emptyList(),
                                                                     time)
+  private val scheduler = new KafkaScheduler(1)
 
   def callback(delayTimeMs: Int) {
     numCallbacks += 1
   }
 
   @Before
-  def beforeMethod() {
+  def before() {
     numCallbacks = 0
+    scheduler.startup()
+  }
+
+  @After
+  def after() {
+    scheduler.shutdown()
   }
 
   @Test
   def testExpire() {
-    val clientMetrics = new ClientQuotaManager(ClientQuotaManagerConfig(), metrics, QuotaType.Produce, time)
+    val clientMetrics = new ClientQuotaManager(ClientQuotaManagerConfig(), metrics, QuotaType.Produce, time, Some(scheduler))
 
     val delayQueue = new DelayQueue[ThrottledResponse]()
     val reaper = new clientMetrics.ThrottledRequestReaper(delayQueue)

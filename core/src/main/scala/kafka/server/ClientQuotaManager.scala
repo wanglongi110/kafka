@@ -21,7 +21,7 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.{ConcurrentHashMap, DelayQueue, TimeUnit}
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
-import kafka.utils.{ShutdownableThread, Logging}
+import kafka.utils.{KafkaScheduler, ShutdownableThread, Logging}
 import org.apache.kafka.common.MetricName
 import org.apache.kafka.common.metrics._
 import org.apache.kafka.common.metrics.stats.{Total, Rate, Avg}
@@ -135,7 +135,8 @@ case class QuotaEntity(quotaId: QuotaId, sanitizedUser: String, clientId: String
 class ClientQuotaManager(private val config: ClientQuotaManagerConfig,
                          private val metrics: Metrics,
                          private val quotaType: QuotaType,
-                         private val time: Time) extends Logging {
+                         private val time: Time,
+                         private val schedulerOpt: Option[KafkaScheduler]) extends Logging {
   private val overriddenQuota = new ConcurrentHashMap[QuotaId, Quota]()
   private val staticConfigClientIdQuota = Quota.upperBound(config.quotaBytesPerSecondDefault)
   @volatile private var quotaTypesEnabled =
@@ -153,6 +154,11 @@ class ClientQuotaManager(private val config: ClientQuotaManagerConfig,
   start() // Use start method to keep findbugs happy
   private def start() {
     throttledRequestReaper.start()
+    schedulerOpt match {
+      case Some(scheduler) =>
+        scheduler.schedule("quota-metrics-logger-%s".format(quotaType), logQuotaMetrics, 60, 60, TimeUnit.SECONDS)
+      case _ =>
+    }
   }
 
   /**
@@ -172,6 +178,20 @@ class ClientQuotaManager(private val config: ClientQuotaManagerConfig,
       }
     }
   }
+
+  def logQuotaMetrics(): Unit = {
+    import scala.collection.JavaConverters._
+    val metricsMap = metrics.metrics().asScala;
+    metricsMap.foreach {
+      case (metricName: MetricName, kafkaMetric: KafkaMetric) =>
+        if (metricName.group().equals(quotaType.toString) &&
+          (metricName.name().equals("byte-rate") || metricName.name().equals("throttle-time")) &&
+          metricName.tags().containsKey("client-id")) {
+          logger.info("Metric name (" + metricName + ") has value (" + kafkaMetric.value() + ")")
+        }
+    }
+  }
+
 
   /**
    * Returns true if any quotas are enabled for this quota manager. This is used
