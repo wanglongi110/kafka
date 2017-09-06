@@ -269,7 +269,7 @@ class ProducerStateManagerTest extends JUnitSuite {
     append(stateManager, producerId, epoch, 4, 4L)
     stateManager.takeSnapshot()
 
-    stateManager.truncateAndReload(1L, 3L, time.milliseconds())
+    stateManager.truncateAndReload(1L, 3L, time.milliseconds(), true)
 
     assertEquals(Some(2L), stateManager.oldestSnapshotOffset)
     assertEquals(Some(3L), stateManager.latestSnapshotOffset)
@@ -297,7 +297,7 @@ class ProducerStateManagerTest extends JUnitSuite {
 
     stateManager.takeSnapshot()
     val recoveredMapping = new ProducerStateManager(partition, logDir, maxPidExpirationMs)
-    recoveredMapping.truncateAndReload(0L, 3L, time.milliseconds)
+    recoveredMapping.truncateAndReload(0L, 3L, time.milliseconds, true)
 
     // entry added after recovery
     append(recoveredMapping, producerId, epoch, 2, 2L)
@@ -311,7 +311,7 @@ class ProducerStateManagerTest extends JUnitSuite {
 
     stateManager.takeSnapshot()
     val recoveredMapping = new ProducerStateManager(partition, logDir, maxPidExpirationMs)
-    recoveredMapping.truncateAndReload(0L, 1L, 70000)
+    recoveredMapping.truncateAndReload(0L, 1L, 70000, true)
 
     // entry added after recovery. The pid should be expired now, and would not exist in the pid mapping. Hence
     // we should get an out of order sequence exception.
@@ -382,10 +382,10 @@ class ProducerStateManagerTest extends JUnitSuite {
     stateManager.takeSnapshot()
 
     append(stateManager, producerId, epoch, sequence + 1, offset = 106)
-    stateManager.truncateAndReload(0L, 106, time.milliseconds())
+    stateManager.truncateAndReload(0L, 106, time.milliseconds(), true)
     assertEquals(None, stateManager.firstUnstableOffset.map(_.messageOffset))
 
-    stateManager.truncateAndReload(0L, 100L, time.milliseconds())
+    stateManager.truncateAndReload(0L, 100L, time.milliseconds(), true)
     assertEquals(Some(99), stateManager.firstUnstableOffset.map(_.messageOffset))
   }
 
@@ -445,7 +445,7 @@ class ProducerStateManagerTest extends JUnitSuite {
     stateManager.takeSnapshot()
     assertEquals(2, stateManager.activeProducers.size)
 
-    stateManager.truncateAndReload(1L, 2L, time.milliseconds())
+    stateManager.truncateAndReload(1L, 2L, time.milliseconds(), true)
     assertEquals(1, stateManager.activeProducers.size)
     assertEquals(None, stateManager.lastEntry(pid1))
 
@@ -482,7 +482,7 @@ class ProducerStateManagerTest extends JUnitSuite {
 
     intercept[OutOfOrderSequenceException] {
       val recoveredMapping = new ProducerStateManager(partition, logDir, maxPidExpirationMs)
-      recoveredMapping.truncateAndReload(0L, 1L, time.milliseconds)
+      recoveredMapping.truncateAndReload(0L, 1L, time.milliseconds, true)
       append(recoveredMapping, pid2, epoch, 1, 4L, 5L)
     }
   }
@@ -605,7 +605,7 @@ class ProducerStateManagerTest extends JUnitSuite {
     stateManager.takeSnapshot()
 
     val recoveredMapping = new ProducerStateManager(partition, logDir, maxPidExpirationMs)
-    recoveredMapping.truncateAndReload(0L, 2L, 70000)
+    recoveredMapping.truncateAndReload(0L, 2L, 70000, true)
 
     // append from old coordinator should be rejected
     appendEndTxnMarker(stateManager, producerId, producerEpoch, ControlRecordType.COMMIT, offset = 100, coordinatorEpoch = 0)
@@ -659,7 +659,7 @@ class ProducerStateManagerTest extends JUnitSuite {
 
     // Ensure that the truncated snapshot is deleted and producer state is loaded from the previous snapshot
     val reloadedStateManager = new ProducerStateManager(partition, logDir, maxPidExpirationMs)
-    reloadedStateManager.truncateAndReload(0L, 20L, time.milliseconds())
+    reloadedStateManager.truncateAndReload(0L, 20L, time.milliseconds(), true)
     assertFalse(snapshotToTruncate.exists())
 
     val loadedProducerState = reloadedStateManager.activeProducers(producerId)
