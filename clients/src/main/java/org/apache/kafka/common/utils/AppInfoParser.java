@@ -54,8 +54,10 @@ public class AppInfoParser {
     public static synchronized void registerAppInfo(String prefix, String id) {
         try {
             ObjectName name = new ObjectName(prefix + ":type=app-info,id=" + id);
-            AppInfo mBean = new AppInfo();
-            ManagementFactory.getPlatformMBeanServer().registerMBean(mBean, name);
+            if (!ManagementFactory.getPlatformMBeanServer().isRegistered(name)) {
+                AppInfo mBean = new AppInfo();
+                ManagementFactory.getPlatformMBeanServer().registerMBean(mBean, name);
+            }
         } catch (JMException e) {
             log.warn("Error registering AppInfo mbean", e);
         }
