@@ -1738,6 +1738,7 @@ class TopicChangeListener(controller: KafkaController, eventManager: ControllerE
 class LogDirEventNotificationListener(controller: KafkaController, eventManager: ControllerEventManager) extends IZkChildListener with Logging {
   override def handleChildChange(parentPath: String, currentChilds: java.util.List[String]): Unit = {
     import JavaConverters._
+    info(s"Received log dir event with broker list ${currentChilds.asScala.mkString(",")}")
     eventManager.put(controller.LogDirEventNotification(currentChilds.asScala))
   }
 }
