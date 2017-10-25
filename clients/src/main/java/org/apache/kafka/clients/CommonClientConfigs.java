@@ -104,6 +104,9 @@ public class CommonClientConfigs {
                                                          + "elapses the client will resend the request if necessary or fail the request if "
                                                          + "retries are exhausted.";
 
+    public static final String ENABLE_STICKY_METADATA_FETCH_CONFIG = "enable.sticky.metadata.fetch";
+    public static final String ENABLE_STICKY_METADATA_FETCH_DOC = "Fetch metadata from the least loaded broker if false. Otherwise fetch metadata "
+                                                         + "from the same broker until it is disconnected.";
 
     /**
      * Postprocess the configuration so that exponential backoff is disabled when reconnect backoff
