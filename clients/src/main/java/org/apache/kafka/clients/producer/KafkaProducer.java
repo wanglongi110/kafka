@@ -18,6 +18,7 @@ package org.apache.kafka.clients.producer;
 
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientUtils;
+import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.NetworkClient;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
@@ -396,6 +397,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     true,
                     apiVersions,
                     throttleTimeSensor);
+            client.setEnableStickyMetadataFetch(config.getBoolean(CommonClientConfigs.ENABLE_STICKY_METADATA_FETCH_CONFIG));
             this.sender = new Sender(logContext,
                     client,
                     this.metadata,

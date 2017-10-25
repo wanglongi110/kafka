@@ -18,6 +18,7 @@ package org.apache.kafka.clients.consumer;
 
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientUtils;
+import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.NetworkClient;
 import org.apache.kafka.clients.consumer.internals.ConsumerCoordinator;
@@ -724,6 +725,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     true,
                     new ApiVersions(),
                     throttleTimeSensor);
+            netClient.setEnableStickyMetadataFetch(config.getBoolean(CommonClientConfigs.ENABLE_STICKY_METADATA_FETCH_CONFIG));
             this.client = new ConsumerNetworkClient(
                     logContext,
                     netClient,
