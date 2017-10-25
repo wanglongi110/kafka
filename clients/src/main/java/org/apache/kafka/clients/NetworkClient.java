@@ -109,6 +109,8 @@ public class NetworkClient implements KafkaClient {
 
     private final Time time;
 
+    private boolean enableStickyMetadataFetch = true;
+
     /**
      * True if we should send an ApiVersionRequest when first connecting to a broker.
      */
@@ -265,6 +267,10 @@ public class NetworkClient implements KafkaClient {
         this.log = logContext.logger(NetworkClient.class);
         this.clientDnsLookup = clientDnsLookup;
         this.state = new AtomicReference<>(State.ACTIVE);
+    }
+
+    public void setEnableStickyMetadataFetch(boolean enableStickyMetadataFetch) {
+        this.enableStickyMetadataFetch = enableStickyMetadataFetch;
     }
 
     /**
@@ -547,6 +553,12 @@ public class NetworkClient implements KafkaClient {
         handleInitiateApiVersionRequests(updatedNow);
         handleTimedOutRequests(responses, updatedNow);
         completeResponses(responses);
+
+        // We changed the metadataUpdater.maybeUpdate() such that it will keep sending MetadataRequest
+        // to the same broker instead choosing the least loaded node. If we don't try to send metadata here, it is possible that
+        // another request is sent to the broker before the next networkClient.poll(). This can cause starvation
+        // for the MetadataRequest and consumer's metadata may be stale for a long time.
+        metadataUpdater.maybeUpdate(updatedNow);
 
         return responses;
     }
@@ -936,6 +948,8 @@ public class NetworkClient implements KafkaClient {
 
         /* the current cluster metadata */
         private final Metadata metadata;
+        // Consumer needs to keep fetching metadata from the same node until that node goes down
+        private Node nodeToFetchMetadata;
 
         // Defined if there is a request in progress, null otherwise
         private Integer inProgressRequestVersion;
@@ -944,6 +958,7 @@ public class NetworkClient implements KafkaClient {
         DefaultMetadataUpdater(Metadata metadata) {
             this.metadata = metadata;
             this.inProgressRequestVersion = null;
+            this.nodeToFetchMetadata = null;
         }
 
         @Override
@@ -974,13 +989,15 @@ public class NetworkClient implements KafkaClient {
 
             // Beware that the behavior of this method and the computation of timeouts for poll() are
             // highly dependent on the behavior of leastLoadedNode.
-            Node node = leastLoadedNode(now);
-            if (node == null) {
+            if (!enableStickyMetadataFetch || nodeToFetchMetadata == null || !connectionStates.isReady(nodeToFetchMetadata.idString(), now))
+                nodeToFetchMetadata = leastLoadedNode(now);
+
+            if (nodeToFetchMetadata == null) {
                 log.debug("Give up sending metadata request since no node is available");
                 return reconnectBackoffMs;
             }
 
-            return maybeUpdate(now, node);
+            return maybeUpdate(now, nodeToFetchMetadata);
         }
 
         @Override
