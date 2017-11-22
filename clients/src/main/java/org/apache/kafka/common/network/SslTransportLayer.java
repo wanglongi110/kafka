@@ -442,10 +442,12 @@ public class SslTransportLayer implements TransportLayer {
             read = readFromAppBuffer(dst);
         }
 
-        if (dst.remaining() > 0) {
+        boolean continueSocketRead = true;
+        while (dst.remaining() > 0 && continueSocketRead) {
             netReadBuffer = Utils.ensureCapacity(netReadBuffer, netReadBufferSize());
             if (netReadBuffer.remaining() > 0) {
                 int netread = socketChannel.read(netReadBuffer);
+                continueSocketRead = netread > 0;
                 if (netread == 0 && netReadBuffer.position() == 0) return read;
                 else if (netread < 0) throw new EOFException("EOF during read");
             }
@@ -458,7 +460,7 @@ public class SslTransportLayer implements TransportLayer {
                     log.trace("SSLChannel Read begin renegotiation channelId {}, appReadBuffer pos {}, netReadBuffer pos {}, netWriteBuffer pos {}",
                               channelId, appReadBuffer.position(), netReadBuffer.position(), netWriteBuffer.position());
                     renegotiate();
-                    break;
+                    return read;
                 }
 
                 if (unwrapResult.getStatus() == Status.OK) {
@@ -477,7 +479,7 @@ public class SslTransportLayer implements TransportLayer {
                     if (dst.hasRemaining())
                         read += readFromAppBuffer(dst);
                     else
-                        break;
+                        return read;
                 } else if (unwrapResult.getStatus() == Status.BUFFER_UNDERFLOW) {
                     int currentNetReadBufferSize = netReadBufferSize();
                     netReadBuffer = Utils.ensureCapacity(netReadBuffer, currentNetReadBufferSize);
@@ -491,7 +493,7 @@ public class SslTransportLayer implements TransportLayer {
                     if (appReadBuffer.position() == 0 && read == 0)
                         throw new EOFException();
                     else
-                        break;
+                        return read;
                 }
             } while (netReadBuffer.position() != 0);
         }
