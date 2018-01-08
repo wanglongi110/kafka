@@ -413,9 +413,13 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
           // so if we catch it in commit we can safely retry
           // and re-throw to break the loop
           mirrorMakerConsumer.commit()
+          mirrorMakerConsumer.clearOffsetMap()
           throw e
 
         case _: CommitFailedException =>
+          // We need to clear the offset map here even though the offset commit failed. We no longer own
+          // those partitions anymore.
+          mirrorMakerConsumer.clearOffsetMap()
           warn("Failed to commit offsets because the consumer group has rebalanced and assigned partitions to " +
             "another instance. If you see this regularly, it could indicate that you need to either increase " +
             s"the consumer's ${consumer.ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG} or reduce the number of records " +
