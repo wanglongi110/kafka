@@ -1607,6 +1607,7 @@ public class KafkaConsumerTest {
         int minBytes = 1;
         int maxBytes = Integer.MAX_VALUE;
         int maxWaitMs = 500;
+        int maxBlockMs = 100;
         int fetchSize = 1024 * 1024;
         int maxPollRecords = Integer.MAX_VALUE;
         boolean checkCrcs = true;
@@ -1662,6 +1663,7 @@ public class KafkaConsumerTest {
                 metricsRegistry.fetcherMetrics,
                 time,
                 retryBackoffMs,
+                maxBlockMs,
                 IsolationLevel.READ_UNCOMMITTED);
 
         return new KafkaConsumer<>(
@@ -1678,7 +1680,8 @@ public class KafkaConsumerTest {
                 subscriptions,
                 metadata,
                 retryBackoffMs,
-                requestTimeoutMs);
+                requestTimeoutMs,
+                maxBlockMs);
     }
 
     private static class FetchInfo {

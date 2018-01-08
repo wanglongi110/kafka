@@ -39,7 +39,7 @@ import org.apache.kafka.common.{KafkaException, TopicPartition}
 import org.apache.kafka.common.protocol.SecurityProtocol
 import org.apache.kafka.common.serialization.ByteArrayDeserializer
 import org.apache.kafka.common.utils.{PoisonPill, Utils}
-import org.apache.kafka.common.errors.WakeupException
+import org.apache.kafka.common.errors.{TimeoutException, WakeupException}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.HashMap
@@ -482,6 +482,10 @@ object MirrorMaker extends Logging with KafkaMetricsGroup {
               maybeFlushAndCommitOffsets()
             }
           } catch {
+            // HOTFIX for unblock Venice MM. Could be removed after KAFKA-4879 is picked up.
+            case _: TimeoutException =>
+              warn("Received timeout exception when doing poll. This maybe caused by topic deletion. Continue polling " +
+                " and a rebalance should be triggered if the topic is deleted.")
             case _: ConsumerTimeoutException =>
               trace("Caught ConsumerTimeoutException, continue iteration.")
             case _: WakeupException =>

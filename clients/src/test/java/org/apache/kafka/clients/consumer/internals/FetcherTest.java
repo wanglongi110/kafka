@@ -119,6 +119,7 @@ public class FetcherTest {
     private int maxWaitMs = 0;
     private int fetchSize = 1000;
     private long retryBackoffMs = 100;
+    private long maxBlockMs = 1000;
     private MockTime time = new MockTime(1);
     private Metadata metadata = new Metadata(0, Long.MAX_VALUE, true);
     private MockClient client = new MockClient(time, metadata);
@@ -2057,6 +2058,7 @@ public class FetcherTest {
                 metricsRegistry,
                 time,
                 retryBackoffMs,
+                maxBlockMs,
                 isolationLevel);
     }
 

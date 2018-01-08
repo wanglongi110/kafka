@@ -110,6 +110,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
     private final ExtendedDeserializer<K> keyDeserializer;
     private final ExtendedDeserializer<V> valueDeserializer;
     private final IsolationLevel isolationLevel;
+    private final long maxBlockMs;
 
     private PartitionRecords nextInLineRecords = null;
 
@@ -129,6 +130,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                    FetcherMetricsRegistry metricsRegistry,
                    Time time,
                    long retryBackoffMs,
+                   long maxBlockMs,
                    IsolationLevel isolationLevel) {
         this.log = logContext.logger(Fetcher.class);
         this.time = time;
@@ -146,6 +148,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         this.completedFetches = new ConcurrentLinkedQueue<>();
         this.sensors = new FetchManagerMetrics(metrics, metricsRegistry);
         this.retryBackoffMs = retryBackoffMs;
+        this.maxBlockMs = maxBlockMs;
         this.isolationLevel = isolationLevel;
 
         subscriptions.addListener(this);
@@ -408,7 +411,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         for (final TopicPartition partition : partitions) {
             offsetResetStrategyTimestamp(partition, offsetResets, partitionsWithNoOffsets);
         }
-        final Map<TopicPartition, OffsetData> offsetsByTimes = retrieveOffsetsByTimes(offsetResets, Long.MAX_VALUE, false);
+        final Map<TopicPartition, OffsetData> offsetsByTimes = retrieveOffsetsByTimes(offsetResets, maxBlockMs, false);
         for (final TopicPartition partition : partitions) {
             final OffsetData offsetData = offsetsByTimes.get(partition);
             if (offsetData == null) {

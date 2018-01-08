@@ -563,6 +563,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
     private final Metadata metadata;
     private final long retryBackoffMs;
     private final long requestTimeoutMs;
+    private final long maxBlockMs;
     private volatile boolean closed = false;
 
     // currentThread holds the threadId of the current thread accessing KafkaConsumer
@@ -651,6 +652,12 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
 
             log.debug("Initializing the Kafka consumer");
             this.requestTimeoutMs = config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG);
+            // HOTFIX for unblock Venice MM. Could be removed after KAFKA-4879 is picked up.
+            // Theoretically max.block.ms should not be less than request.timeout.ms, but it does not really matter
+            // that much. For the hotfix, we want to handle the case that a topic is deleted from the source cluster.
+            // In that case, we need the poll() to return quick so a new rebalance can be triggered to remove the
+            // partition from the assignment. So a shorter block time is preferred.
+            this.maxBlockMs = config.getLong(ConsumerConfig.MAX_BLOCK_MS_CONFIG);
             int sessionTimeOutMs = config.getInt(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG);
             int fetchMaxWaitMs = config.getInt(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG);
             if (this.requestTimeoutMs <= sessionTimeOutMs || this.requestTimeoutMs <= fetchMaxWaitMs)
@@ -764,6 +771,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     metricsRegistry.fetcherMetrics,
                     this.time,
                     this.retryBackoffMs,
+                    this.maxBlockMs,
                     isolationLevel);
 
             config.logUnused();
@@ -793,7 +801,8 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                   SubscriptionState subscriptions,
                   Metadata metadata,
                   long retryBackoffMs,
-                  long requestTimeoutMs) {
+                  long requestTimeoutMs,
+                  long maxBlockMs) {
         this.log = logContext.logger(getClass());
         this.clientId = clientId;
         this.coordinator = coordinator;
@@ -808,6 +817,7 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
         this.metadata = metadata;
         this.retryBackoffMs = retryBackoffMs;
         this.requestTimeoutMs = requestTimeoutMs;
+        this.maxBlockMs = maxBlockMs;
     }
 
     /**

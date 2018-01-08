@@ -229,6 +229,12 @@ public class ConsumerConfig extends AbstractConfig {
     public static final String EXCLUDE_INTERNAL_TOPICS_CONFIG = "exclude.internal.topics";
     private static final String EXCLUDE_INTERNAL_TOPICS_DOC = "Whether records from internal topics (such as offsets) should be exposed to the consumer. "
                                                             + "If set to <code>true</code> the only way to receive records from an internal topic is subscribing to it.";
+
+    // HOTFIX for unblock Venice MM. Could be removed after KAFKA-4879 is picked up.
+    /** <code>max.block.ms</code> */
+    public static final String MAX_BLOCK_MS_CONFIG = "max.block.ms";
+    private static final String MAX_BLOCK_MS_DOC = "The maximum time a blocking call will take before it succeeds or throws exception";
+
     public static final boolean DEFAULT_EXCLUDE_INTERNAL_TOPICS = true;
 
     /**
@@ -253,7 +259,7 @@ public class ConsumerConfig extends AbstractConfig {
             " return the LSO";
 
     public static final String DEFAULT_ISOLATION_LEVEL = IsolationLevel.READ_UNCOMMITTED.toString().toLowerCase(Locale.ROOT);
-    
+
     static {
         CONFIG = new ConfigDef().define(BOOTSTRAP_SERVERS_CONFIG,
                                         Type.LIST,
@@ -443,6 +449,13 @@ public class ConsumerConfig extends AbstractConfig {
                                         CommonClientConfigs.DEFAULT_SECURITY_PROTOCOL,
                                         Importance.MEDIUM,
                                         CommonClientConfigs.SECURITY_PROTOCOL_DOC)
+                                // HOTFIX for unblock Venice MM. Could be removed after KAFKA-4879 is picked up.
+                                .define(MAX_BLOCK_MS_CONFIG,
+                                        Type.LONG,
+                                        60 * 1000,
+                                        atLeast(0),
+                                        Importance.MEDIUM,
+                                        MAX_BLOCK_MS_DOC)
                                 .withClientSslSupport()
                                 .withClientSaslSupport();
 
