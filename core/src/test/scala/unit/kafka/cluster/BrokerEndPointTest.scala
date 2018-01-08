@@ -83,7 +83,7 @@ class BrokerEndPointTest {
 
   @Test
   def testFromJsonV1(): Unit = {
-    val brokerInfoStr = """{"jmx_port":-1,"timestamp":"1420485325400","host":"172.16.8.243","version":1,"port":9091}"""
+    val brokerInfoStr = """{"jmx_port":-1,"timestamp":"1420485325400","host":"172.16.8.243","version":1,"port":9091,"endpoints":["PLAINTEXT://172.16.8.243:9091"]}"""
     val broker = parseBrokerJson(1, brokerInfoStr)
     assertEquals(1, broker.id)
     val brokerEndPoint = broker.brokerEndPoint(ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT))
