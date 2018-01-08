@@ -139,6 +139,13 @@ class LogCleaner(initialConfig: CleanerConfig,
           def value: Int = Math.max(0, (cleaners.map(_.lastPreCleanStats).map(_.maxCompactionDelayMs).max / 1000).toInt)
           })
 
+  /* a metric to track the number of cleaner threads alive */
+  newGauge("live-cleaner-thread-count",
+          new Gauge[Int] {
+            def value: Int = cleaners.count(_.asInstanceOf[Thread].isAlive)
+          })
+
+
   /**
    * Start the background cleaning
    */
