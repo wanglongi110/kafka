@@ -22,14 +22,14 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.utils.CollectionUtils;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-
-public class AlterReplicaDirResponse extends AbstractResponse {
+public class AlterReplicaLogDirsResponse extends AbstractResponse {
 
     // request level key names
     private static final String TOPICS_KEY_NAME = "topics";
@@ -53,7 +53,7 @@ public class AlterReplicaDirResponse extends AbstractResponse {
     private final Map<TopicPartition, Errors> responses;
     private final int throttleTimeMs;
 
-    public AlterReplicaDirResponse(Struct struct) {
+    public AlterReplicaLogDirsResponse(Struct struct) {
         throttleTimeMs = struct.getInt(THROTTLE_TIME_KEY_NAME);
         responses = new HashMap<>();
         for (Object topicStructObj : struct.getArray(TOPICS_KEY_NAME)) {
@@ -71,14 +71,14 @@ public class AlterReplicaDirResponse extends AbstractResponse {
     /**
      * Constructor for version 0.
      */
-    public AlterReplicaDirResponse(int throttleTimeMs, Map<TopicPartition, Errors> responses) {
+    public AlterReplicaLogDirsResponse(int throttleTimeMs, Map<TopicPartition, Errors> responses) {
         this.throttleTimeMs = throttleTimeMs;
         this.responses = responses;
     }
 
     @Override
     protected Struct toStruct(short version) {
-        Struct struct = new Struct(ApiKeys.ALTER_REPLICA_DIR.responseSchema(version));
+        Struct struct = new Struct(ApiKeys.ALTER_REPLICA_LOG_DIRS.responseSchema(version));
         struct.set(THROTTLE_TIME_KEY_NAME, throttleTimeMs);
         Map<String, Map<Integer, Errors>> responsesByTopic = CollectionUtils.groupDataByTopic(responses);
         List<Struct> topicStructArray = new ArrayList<>();
@@ -108,7 +108,7 @@ public class AlterReplicaDirResponse extends AbstractResponse {
         return this.responses;
     }
 
-    public static AlterReplicaDirResponse parse(ByteBuffer buffer, short version) {
-        return new AlterReplicaDirResponse(ApiKeys.ALTER_REPLICA_DIR.responseSchema(version).read(buffer));
+    public static AlterReplicaLogDirsResponse parse(ByteBuffer buffer, short version) {
+        return new AlterReplicaLogDirsResponse(ApiKeys.ALTER_REPLICA_LOG_DIRS.responseSchema(version).read(buffer));
     }
 }

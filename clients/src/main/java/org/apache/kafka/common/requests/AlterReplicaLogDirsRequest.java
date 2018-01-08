@@ -22,14 +22,14 @@ import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.utils.CollectionUtils;
+
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-
-public class AlterReplicaDirRequest extends AbstractRequest {
+public class AlterReplicaLogDirsRequest extends AbstractRequest {
 
     // request level key names
     private static final String LOG_DIRS_KEY_NAME = "log_dirs";
@@ -39,28 +39,28 @@ public class AlterReplicaDirRequest extends AbstractRequest {
     private static final String TOPICS_KEY_NAME = "topics";
 
     // topic level key names
-    private static final String TOPIC_KEY_NAME = "topic";
     private static final String PARTITIONS_KEY_NAME = "partitions";
+    private static final String TOPIC_KEY_NAME = "topic";
 
     private final Map<TopicPartition, String> partitionDirs;
 
-    public static class Builder extends AbstractRequest.Builder<AlterReplicaDirRequest> {
+    public static class Builder extends AbstractRequest.Builder<AlterReplicaLogDirsRequest> {
         private final Map<TopicPartition, String> partitionDirs;
 
         public Builder(Map<TopicPartition, String> partitionDirs) {
-            super(ApiKeys.ALTER_REPLICA_DIR);
+            super(ApiKeys.ALTER_REPLICA_LOG_DIRS);
             this.partitionDirs = partitionDirs;
         }
 
         @Override
-        public AlterReplicaDirRequest build(short version) {
-            return new AlterReplicaDirRequest(partitionDirs, version);
+        public AlterReplicaLogDirsRequest build(short version) {
+            return new AlterReplicaLogDirsRequest(partitionDirs, version);
         }
 
         @Override
         public String toString() {
             StringBuilder builder = new StringBuilder();
-            builder.append("(type=AlterReplicaDirRequest")
+            builder.append("(type=AlterReplicaLogDirsRequest")
                 .append(", partitionDirs=")
                 .append(partitionDirs)
                 .append(")");
@@ -68,7 +68,7 @@ public class AlterReplicaDirRequest extends AbstractRequest {
         }
     }
 
-    public AlterReplicaDirRequest(Struct struct, short version) {
+    public AlterReplicaLogDirsRequest(Struct struct, short version) {
         super(version);
         partitionDirs = new HashMap<>();
         for (Object logDirStructObj : struct.getArray(LOG_DIRS_KEY_NAME)) {
@@ -85,7 +85,7 @@ public class AlterReplicaDirRequest extends AbstractRequest {
         }
     }
 
-    public AlterReplicaDirRequest(Map<TopicPartition, String> partitionDirs, short version) {
+    public AlterReplicaLogDirsRequest(Map<TopicPartition, String> partitionDirs, short version) {
         super(version);
         this.partitionDirs = partitionDirs;
     }
@@ -99,7 +99,7 @@ public class AlterReplicaDirRequest extends AbstractRequest {
             dirPartitions.get(entry.getValue()).add(entry.getKey());
         }
 
-        Struct struct = new Struct(ApiKeys.ALTER_REPLICA_DIR.requestSchema(version()));
+        Struct struct = new Struct(ApiKeys.ALTER_REPLICA_LOG_DIRS.requestSchema(version()));
         List<Struct> logDirStructArray = new ArrayList<>();
         for (Map.Entry<String, List<TopicPartition>> logDirEntry: dirPartitions.entrySet()) {
             Struct logDirStruct = struct.instance(LOG_DIRS_KEY_NAME);
@@ -130,11 +130,11 @@ public class AlterReplicaDirRequest extends AbstractRequest {
         short versionId = version();
         switch (versionId) {
             case 0:
-                return new AlterReplicaDirResponse(throttleTimeMs, responseMap);
+                return new AlterReplicaLogDirsResponse(throttleTimeMs, responseMap);
             default:
                 throw new IllegalArgumentException(
                     String.format("Version %d is not valid. Valid versions for %s are 0 to %d", versionId,
-                        this.getClass().getSimpleName(), ApiKeys.ALTER_REPLICA_DIR.latestVersion()));
+                        this.getClass().getSimpleName(), ApiKeys.ALTER_REPLICA_LOG_DIRS.latestVersion()));
         }
     }
 
@@ -142,7 +142,7 @@ public class AlterReplicaDirRequest extends AbstractRequest {
         return partitionDirs;
     }
 
-    public static AlterReplicaDirRequest parse(ByteBuffer buffer, short version) {
-        return new AlterReplicaDirRequest(ApiKeys.ALTER_REPLICA_DIR.parseRequest(version, buffer), version);
+    public static AlterReplicaLogDirsRequest parse(ByteBuffer buffer, short version) {
+        return new AlterReplicaLogDirsRequest(ApiKeys.ALTER_REPLICA_LOG_DIRS.parseRequest(version, buffer), version);
     }
 }
