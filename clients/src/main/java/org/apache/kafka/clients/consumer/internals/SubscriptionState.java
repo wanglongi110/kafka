@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.consumer.internals;
 
+import java.util.ArrayList;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.NoOffsetForPartitionException;
@@ -92,6 +93,9 @@ public class SubscriptionState {
 
     /* Default offset reset strategy */
     private final OffsetResetStrategy defaultResetStrategy;
+
+    /* Listeners provide a hook for internal state cleanup (e.g. metrics) on assignment changes */
+    private final List<Listener> listeners = new ArrayList<>();
 
     /* User-provided listener to be invoked when assignment changes */
     private ConsumerRebalanceListener rebalanceListener;
@@ -192,6 +196,7 @@ public class SubscriptionState {
             return false;
 
         assignmentId++;
+        fireOnAssignment(partitions);
 
         Set<String> manualSubscribedTopics = new HashSet<>();
         Map<TopicPartition, TopicPartitionState> partitionToState = new HashMap<>();
@@ -239,6 +244,7 @@ public class SubscriptionState {
             Map<TopicPartition, TopicPartitionState> assignedPartitionStates = partitionToStateMap(
                     assignments);
             assignmentId++;
+            fireOnAssignment(assignedPartitionStates.keySet());
             this.assignment.set(assignedPartitionStates);
         }
 
@@ -270,6 +276,7 @@ public class SubscriptionState {
         this.subscribedPattern = null;
         this.subscriptionType = SubscriptionType.NONE;
         this.assignmentId++;
+        fireOnAssignment(Collections.emptySet());
     }
 
     /**
@@ -626,6 +633,16 @@ public class SubscriptionState {
         return rebalanceListener;
     }
 
+    public void addListener(Listener listener) {
+        listeners.add(listener);
+    }
+
+    public void fireOnAssignment(Set<TopicPartition> assignment) {
+        for (Listener listener : listeners)
+            listener.onAssignment(assignment);
+    }
+
+
     private static Map<TopicPartition, TopicPartitionState> partitionToStateMap(Collection<TopicPartition> assignments) {
         Map<TopicPartition, TopicPartitionState> map = new HashMap<>(assignments.size());
         for (TopicPartition tp : assignments)
@@ -831,6 +848,17 @@ public class SubscriptionState {
         private OffsetResetStrategy resetStrategy() {
             return resetStrategy;
         }
+    }
+
+
+    public interface Listener {
+        /**
+         * Fired after a new assignment is received (after a group rebalance or when the user manually changes the
+         * assignment).
+         *
+         * @param assignment The topic partitions assigned to the consumer
+         */
+        void onAssignment(Set<TopicPartition> assignment);
     }
 
     /**
