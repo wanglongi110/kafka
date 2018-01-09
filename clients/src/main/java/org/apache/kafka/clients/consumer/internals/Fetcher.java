@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.consumer.internals;
 
+import java.util.PriorityQueue;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -69,17 +70,19 @@ import org.slf4j.Logger;
 
 import java.io.Closeable;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.PriorityQueue;
+import java.util.Queue;
+import java.util.Comparator;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -113,6 +116,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
     private final long maxBlockMs;
 
     private PartitionRecords nextInLineRecords = null;
+
+    // HOTFIX
+    private Map<TopicPartition, PartitionRecords> pausedNextInLineRecordsPerTopicPartition;
+    private HashMap<TopicPartition, Queue<CompletedFetch>> pausedCompletedFetchesPerTopicPartition;
+    private LinkedHashSet<TopicPartition> recentlyUnPausedTopicPartitions;
 
     public Fetcher(LogContext logContext,
                    ConsumerNetworkClient client,
@@ -151,6 +159,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         this.maxBlockMs = maxBlockMs;
         this.isolationLevel = isolationLevel;
 
+        // HOTFIX
+        this.pausedNextInLineRecordsPerTopicPartition = new HashMap<>();
+        this.pausedCompletedFetchesPerTopicPartition = new HashMap<>();
+        this.recentlyUnPausedTopicPartitions = new LinkedHashSet<>();
+
         subscriptions.addListener(this);
     }
 
@@ -184,10 +197,37 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         return !completedFetches.isEmpty();
     }
 
+    /**
+     * Return if there are buffered CompletedFetches for a paused TopicPartition.
+     *
+     * @param tp {@link TopicPartition}
+     * @return  {@code true} if there are buffered {@link CompletedFetch},  {@false} otherwise
+     */
+    public boolean hasPausedCompletedFetchesFor(TopicPartition tp) {
+        return pausedCompletedFetchesPerTopicPartition.containsKey(tp);
+    }
+
     private boolean matchesRequestedPartitions(FetchRequest.Builder request, FetchResponse response) {
         Set<TopicPartition> requestedPartitions = request.fetchData().keySet();
         Set<TopicPartition> fetchedPartitions = response.responseData().keySet();
         return fetchedPartitions.equals(requestedPartitions);
+    }
+
+    // HOTFIX
+    public void addRecentlyUnpausedPartition(TopicPartition tp) {
+        this.recentlyUnPausedTopicPartitions.add(tp);
+    }
+
+    // HOTFIX
+    public void removeRecentlyUnpausedPartition(TopicPartition tp) {
+        this.recentlyUnPausedTopicPartitions.remove(tp);
+    }
+
+    // HOTFIX
+    public void clearBufferedDataForPausedPartitions() {
+        this.recentlyUnPausedTopicPartitions.clear();
+        this.pausedNextInLineRecordsPerTopicPartition.clear();
+        this.pausedCompletedFetchesPerTopicPartition.clear();
     }
 
     /**
@@ -509,6 +549,21 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         return result;
     }
 
+    private void readBufferedCompletedFetchesForPausedTopicPartitions(TopicPartition tp) {
+        Queue<CompletedFetch> pausedCompletedFetches = pausedCompletedFetchesPerTopicPartition.get(tp);
+        if (pausedCompletedFetches == null || pausedCompletedFetches.isEmpty()) {
+            pausedCompletedFetchesPerTopicPartition.remove(tp);
+        } else {
+            CompletedFetch bufferedCompletedFetch =  pausedCompletedFetches.peek();
+            // remove the TopicPartition if there is no more buffered CompletedFetch left to be drained
+            if (pausedCompletedFetches.isEmpty()) {
+                pausedCompletedFetchesPerTopicPartition.remove(tp);
+            }
+            nextInLineRecords = parseCompletedFetch(bufferedCompletedFetch);
+            pausedCompletedFetches.poll();
+        }
+    }
+
     /**
      * Return the fetched records, empty the record buffer and update the consumed position.
      *
@@ -525,11 +580,26 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         try {
             while (recordsRemaining > 0) {
                 if (nextInLineRecords == null || nextInLineRecords.isFetched) {
-                    CompletedFetch completedFetch = completedFetches.peek();
-                    if (completedFetch == null) break;
+                    // HOTFIX
+                    if (!recentlyUnPausedTopicPartitions.isEmpty()) {
+                        Iterator<TopicPartition> itr = recentlyUnPausedTopicPartitions.iterator();
+                        TopicPartition tp = itr.next();
+                        if (pausedNextInLineRecordsPerTopicPartition.containsKey(tp)) {
+                            nextInLineRecords = pausedNextInLineRecordsPerTopicPartition.remove(tp);
+                        }  else if (pausedCompletedFetchesPerTopicPartition.containsKey(tp)) {
+                            readBufferedCompletedFetchesForPausedTopicPartitions(tp);
+                        }
+                        // remove the TopicPartition if there is no more buffered CompletedFetch or PartitionRecord left to be drained
+                        if (!pausedCompletedFetchesPerTopicPartition.containsKey(tp) && !pausedNextInLineRecordsPerTopicPartition.containsKey(tp)) {
+                            itr.remove();
+                        }
+                    } else {
+                        CompletedFetch completedFetch = completedFetches.peek();
+                        if (completedFetch == null) break;
 
-                    nextInLineRecords = parseCompletedFetch(completedFetch);
-                    completedFetches.poll();
+                        nextInLineRecords = parseCompletedFetch(completedFetch);
+                        completedFetches.poll();
+                    }
                 } else {
                     List<ConsumerRecord<K, V>> records = fetchRecords(nextInLineRecords, recordsRemaining);
                     TopicPartition partition = nextInLineRecords.partition;
@@ -558,6 +628,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
     }
 
     private List<ConsumerRecord<K, V>> fetchRecords(PartitionRecords partitionRecords, int maxRecords) {
+        boolean shouldDrainRecords = true;
         if (!subscriptions.isAssigned(partitionRecords.partition)) {
             // this can happen when a rebalance happened before fetched records are returned to the consumer's poll call
             log.debug("Not returning fetched records for partition {} since it is no longer assigned",
@@ -567,6 +638,13 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
             long position = subscriptions.position(partitionRecords.partition);
             if (!subscriptions.isFetchable(partitionRecords.partition)) {
                 // this can happen when a partition is paused before fetched records are returned to the consumer's poll call
+                // HOTFIX : check if the TopicPartition is assigned but is paused. If it is paused, buffer the fetched records for
+                // reuse on unpause
+                if (subscriptions.isPaused(partitionRecords.partition)) {
+                    this.pausedNextInLineRecordsPerTopicPartition.put(partitionRecords.partition, partitionRecords);
+                    shouldDrainRecords = false;
+                    nextInLineRecords = null;
+                }
                 log.debug("Not returning fetched records for assigned partition {} since it is no longer fetchable",
                         partitionRecords.partition);
             } else if (partitionRecords.nextFetchOffset == position) {
@@ -590,7 +668,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
             }
         }
 
-        partitionRecords.drain();
+        if (shouldDrainRecords) {
+            partitionRecords.drain();
+        }
         return emptyList();
     }
 
@@ -764,6 +844,9 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         for (CompletedFetch completedFetch : completedFetches) {
             exclude.add(completedFetch.partition);
         }
+        // HOTFIX : if there are already buffered CompletedFetches do not send another fetch for such TopicPartitions
+        exclude.addAll(pausedCompletedFetchesPerTopicPartition.keySet());
+
         fetchable.removeAll(exclude);
         return fetchable;
     }
@@ -819,12 +902,24 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         long fetchOffset = completedFetch.fetchedOffset;
         PartitionRecords partitionRecords = null;
         Errors error = partition.error;
+        boolean paused = false;
 
         try {
             if (!subscriptions.isFetchable(tp)) {
                 // this can happen when a rebalance happened or a partition consumption paused
                 // while fetch is still in-flight
                 log.debug("Ignoring fetched records for partition {} since it is no longer fetchable", tp);
+                // HOTFIX : if the topic partition is paused, buffer the completed fetch to be reuse on unpause
+                if (subscriptions.isAssigned(tp) && subscriptions.hasValidPosition(tp) && subscriptions.isPaused(tp)) {
+                    Queue<CompletedFetch> pausedCompletedFetches = new ArrayDeque();
+                    Queue<CompletedFetch> existingPausedCompletedFetches = this.pausedCompletedFetchesPerTopicPartition.putIfAbsent(tp, pausedCompletedFetches);
+                    if (existingPausedCompletedFetches != null) {
+                        existingPausedCompletedFetches.add(completedFetch);
+                    } else {
+                        pausedCompletedFetches.add(completedFetch);
+                    }
+                    paused = true;
+                }
             } else if (error == Errors.NONE) {
                 // we are interested in this fetch only if the beginning offset matches the
                 // current consumed position
@@ -897,7 +992,7 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
             if (partitionRecords == null)
                 completedFetch.metricAggregator.record(tp, 0, 0);
 
-            if (error != Errors.NONE)
+            if (!paused && error != Errors.NONE)
                 // we move the partition to the end if there was an error. This way, it's more likely that partitions for
                 // the same topic can remain together (allowing for more efficient serialization).
                 subscriptions.movePartitionToEnd(tp);
@@ -938,6 +1033,11 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
     @Override
     public void onAssignment(Set<TopicPartition> assignment) {
         sensors.updatePartitionLagSensors(assignment);
+        /*
+         * HOTFIX : clear the buffered data for paused partitions on assignment.
+         * We can also add a onRevoke() api in the listener and call this from the ConsumerCoordinator.onJoinPrepare().
+         */
+        clearBufferedDataForPausedPartitions();
     }
 
     public static Sensor throttleTimeSensor(Metrics metrics, FetcherMetricsRegistry metricsRegistry) {

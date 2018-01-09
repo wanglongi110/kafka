@@ -701,6 +701,7 @@ public class FetcherTest {
         client.prepareResponse(fetchResponse(tp0, this.records, Errors.NONE, 100L, 0));
         consumerClient.poll(0);
         assertNull(fetcher.fetchedRecords().get(tp0));
+        assertTrue(fetcher.hasPausedCompletedFetchesFor(tp0));
     }
 
     @Test
@@ -711,6 +712,21 @@ public class FetcherTest {
         subscriptions.pause(tp0);
         assertFalse(fetcher.sendFetches() > 0);
         assertTrue(client.requests().isEmpty());
+    }
+
+    @Test
+    public void testFetchOnBufferedCompletedFetchesForPausedPartitions() {
+        subscriptions.assignFromUser(singleton(tp0));
+        subscriptions.seek(tp0, 0);
+
+        assertEquals(1, fetcher.sendFetches());
+        subscriptions.pause(tp0);
+
+        client.prepareResponse(fetchResponse(tp0, this.records, Errors.NONE, 100L, 0));
+        consumerClient.poll(0);
+        assertNull(fetcher.fetchedRecords().get(tp0));
+        assertTrue(fetcher.hasPausedCompletedFetchesFor(tp0));
+        assertEquals(0, fetcher.sendFetches());
     }
 
     @Test
