@@ -268,8 +268,8 @@ class LogCleaner(val config: CleanerConfig,
           var endOffset = cleanable.firstDirtyOffset
           try {
             val (nextDirtyOffset, cleanerStats) = cleaner.clean(cleanable)
-            recordStats(cleaner.id, cleanable.log.name, cleanable.firstDirtyOffset, endOffset, cleanerStats)
             endOffset = nextDirtyOffset
+            recordStats(cleaner.id, cleanable.log.name, cleanable.firstDirtyOffset, endOffset, cleanerStats)
           } catch {
             case _: LogCleaningAbortedException => // task can be aborted, let it go.
             case _: KafkaStorageException => // partition is already offline. let it go.
