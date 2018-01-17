@@ -221,7 +221,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
         try {
           if (config.autoCommitEnable)
             scheduler.shutdown()
-          fetcher.foreach(_.stopConnections())
+          fetcher.foreach(_.shutdown())
           sendShutdownToAllQueues()
           if (config.autoCommitEnable)
             commitOffsets(true)
