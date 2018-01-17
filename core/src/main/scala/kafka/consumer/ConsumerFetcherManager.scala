@@ -173,6 +173,15 @@ class ConsumerFetcherManager(private val consumerIdString: String,
     }
   }
 
+  def shutdown(): Unit = {
+    stopConnections()
+    metadataNetworkClientOpt.map(_.close())
+  }
+
+  /**
+    * This method does not close the underlying selector used by the leader-finder-thread.
+    * See shutdown for that.
+    */
   def stopConnections() {
     /*
      * Stop the leader finder thread first before stopping fetchers. Otherwise, if there are more partitions without
