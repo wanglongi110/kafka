@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.consumer.internals;
 
+import java.util.concurrent.TimeUnit;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.consumer.CommitFailedException;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
@@ -87,6 +88,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     private MetadataSnapshot metadataSnapshot;
     private MetadataSnapshot assignmentSnapshot;
     private long nextAutoCommitDeadline;
+    private volatile long prevPollTime = Long.MIN_VALUE; //volatile for metrics
 
     /**
      * Initialize the coordination manager.
@@ -279,6 +281,11 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @param now current time in milliseconds
      */
     public void poll(long now, long remainingMs) {
+        if (prevPollTime > Long.MIN_VALUE) {
+            sensors.pollInterval.record(now - prevPollTime);
+        }
+        prevPollTime = now;
+
         invokeCompletedOffsetCommitCallbacks();
 
         if (subscriptions.partitionsAutoAssigned()) {
@@ -880,6 +887,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     private class ConsumerCoordinatorMetrics {
         private final String metricGrpName;
         private final Sensor commitLatency;
+        private final Sensor pollInterval;
 
         private ConsumerCoordinatorMetrics(Metrics metrics, String metricGrpPrefix) {
             this.metricGrpName = metricGrpPrefix + "-coordinator-metrics";
@@ -904,6 +912,32 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             metrics.addMetric(metrics.metricName("assigned-partitions",
                 this.metricGrpName,
                 "The number of partitions currently assigned to this consumer"), numParts);
+
+            //HOTFIX - extra liveliness-related metrics
+
+            this.pollInterval = metrics.sensor("poll-interval");
+            this.pollInterval.add(metrics.metricName("poll-interval-avg",
+                this.metricGrpName,
+                "The average time between subsequent poll calls"), new Avg());
+            this.pollInterval.add(metrics.metricName("poll-interval-max",
+                this.metricGrpName,
+                "The max time between subsequent poll calls"), new Max());
+            this.pollInterval.add(metrics.metricName("poll-rate",
+                this.metricGrpName,
+                "The rate of poll calls"), new Rate(new Count()));
+
+            Measurable lastHeartbeat =
+                new Measurable() {
+                    public double measure(MetricConfig config, long now) {
+                        return TimeUnit.SECONDS.convert(now - prevPollTime, TimeUnit.MILLISECONDS);
+                    }
+                };
+            metrics.addMetric(metrics.metricName("last-poll-seconds-ago",
+                this.metricGrpName,
+                "The number of seconds since the last poll call"),
+                lastHeartbeat);
+
+            //end HOTFIX
         }
     }
 

@@ -26,7 +26,7 @@ public final class Heartbeat {
     private final long retryBackoffMs;
 
     private volatile long lastHeartbeatSend; // volatile since it is read by metrics
-    private long lastHeartbeatReceive;
+    private volatile long lastHeartbeatReceive;
     private long lastSessionReset;
     private long lastPoll;
     private boolean heartbeatFailed;
@@ -64,9 +64,13 @@ public final class Heartbeat {
     public boolean shouldHeartbeat(long now) {
         return timeToNextHeartbeat(now) == 0;
     }
-    
+
     public long lastHeartbeatSend() {
         return this.lastHeartbeatSend;
+    }
+
+    public long lastHeartbeatReceive() {
+        return lastHeartbeatReceive;
     }
 
     public long timeToNextHeartbeat(long now) {
