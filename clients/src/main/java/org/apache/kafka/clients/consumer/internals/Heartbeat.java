@@ -33,6 +33,7 @@ public final class Heartbeat {
     private final Timer pollTimer;
 
     private volatile long lastHeartbeatSend;
+    private volatile long lastHeartbeatReceive;
 
     public Heartbeat(Time time,
                      int sessionTimeoutMs,
@@ -53,6 +54,7 @@ public final class Heartbeat {
     }
 
     private void update(long now) {
+        lastHeartbeatReceive = now;
         heartbeatTimer.update(now);
         sessionTimer.update(now);
         pollTimer.update(now);
@@ -83,9 +85,13 @@ public final class Heartbeat {
         update(now);
         return heartbeatTimer.isExpired();
     }
-    
+
     public long lastHeartbeatSend() {
         return this.lastHeartbeatSend;
+    }
+
+    public long lastHeartbeatReceive() {
+        return lastHeartbeatReceive;
     }
 
     public long timeToNextHeartbeat(long now) {

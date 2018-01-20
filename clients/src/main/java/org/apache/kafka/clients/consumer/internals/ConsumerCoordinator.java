@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.consumer.internals;
 
+import java.util.concurrent.TimeUnit;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.consumer.CommitFailedException;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
@@ -90,6 +91,9 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     private MetadataSnapshot metadataSnapshot;
     private MetadataSnapshot assignmentSnapshot;
     private Timer nextAutoCommitTimer;
+
+    private volatile long prevPollTime = Long.MIN_VALUE; //volatile for metrics
+
 
     // hold onto request&future for committed offset requests to enable async calls.
     private PendingCommittedOffsetRequest pendingCommittedOffsetRequest = null;
@@ -308,8 +312,14 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
      * @return true iff the operation succeeded
      */
     public boolean poll(Timer timer) {
-        invokeCompletedOffsetCommitCallbacks();
 
+        long currentTime = time.milliseconds();
+        if (prevPollTime > Long.MIN_VALUE) {
+            sensors.pollInterval.record(currentTime - prevPollTime);
+        }
+        prevPollTime = currentTime;
+
+        invokeCompletedOffsetCommitCallbacks();
         if (subscriptions.partitionsAutoAssigned()) {
             // Always update the heartbeat last poll time so that the heartbeat thread does not leave the
             // group proactively due to application inactivity even if (say) the coordinator cannot be found.
@@ -932,6 +942,7 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
     private class ConsumerCoordinatorMetrics {
         private final String metricGrpName;
         private final Sensor commitLatency;
+        private final Sensor pollInterval;
 
         private ConsumerCoordinatorMetrics(Metrics metrics, String metricGrpPrefix) {
             this.metricGrpName = metricGrpPrefix + "-coordinator-metrics";
@@ -955,6 +966,30 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             metrics.addMetric(metrics.metricName("assigned-partitions",
                 this.metricGrpName,
                 "The number of partitions currently assigned to this consumer"), numParts);
+
+            //HOTFIX - extra liveliness-related metrics
+
+            this.pollInterval = metrics.sensor("poll-interval");
+            this.pollInterval.add(metrics.metricName("poll-interval-avg",
+                this.metricGrpName,
+                "The average time between subsequent poll calls"), new Avg());
+            this.pollInterval.add(metrics.metricName("poll-interval-max",
+                this.metricGrpName,
+                "The max time between subsequent poll calls"), new Max());
+            this.pollInterval.add(createMeter(metrics, metricGrpName, "poll", "poll calls"));
+
+            Measurable lastHeartbeat =
+                new Measurable() {
+                    public double measure(MetricConfig config, long now) {
+                        return TimeUnit.SECONDS.convert(now - prevPollTime, TimeUnit.MILLISECONDS);
+                    }
+                };
+            metrics.addMetric(metrics.metricName("last-poll-seconds-ago",
+                this.metricGrpName,
+                "The number of seconds since the last poll call"),
+                lastHeartbeat);
+
+            //end HOTFIX
         }
     }
 
