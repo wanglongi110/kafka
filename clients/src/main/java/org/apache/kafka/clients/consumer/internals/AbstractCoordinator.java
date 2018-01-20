@@ -19,6 +19,7 @@ package org.apache.kafka.clients.consumer.internals;
 import org.apache.kafka.clients.ClientResponse;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.errors.DisconnectException;
 import org.apache.kafka.common.errors.GroupAuthorizationException;
 import org.apache.kafka.common.errors.IllegalGenerationException;
@@ -247,10 +248,10 @@ public abstract class AbstractCoordinator implements Closeable {
             // find a node to ask about the coordinator
             Node node = this.client.leastLoadedNode();
             if (node == null) {
-                log.debug("No broker available to send GroupCoordinator request");
+                log.debug("No broker available to send FindCoordinator request");
                 return RequestFuture.noBrokersAvailable();
             } else
-                findCoordinatorFuture = sendGroupCoordinatorRequest(node);
+                findCoordinatorFuture = sendFindCoordinatorRequest(node);
         }
         return findCoordinatorFuture;
     }
@@ -573,34 +574,35 @@ public abstract class AbstractCoordinator implements Closeable {
      * one of the brokers. The returned future should be polled to get the result of the request.
      * @return A request future which indicates the completion of the metadata request
      */
-    private RequestFuture<Void> sendGroupCoordinatorRequest(Node node) {
+    private RequestFuture<Void> sendFindCoordinatorRequest(Node node) {
         // initiate the group metadata request
-        log.debug("Sending GroupCoordinator request to broker {}", node);
+        log.debug("Sending FindCoordinator request to broker {}", node);
         FindCoordinatorRequest.Builder requestBuilder =
                 new FindCoordinatorRequest.Builder(FindCoordinatorRequest.CoordinatorType.GROUP, this.groupId);
         return client.send(node, requestBuilder)
-                     .compose(new GroupCoordinatorResponseHandler());
+                     .compose(new FindCoordinatorResponseHandler());
     }
 
-    private class GroupCoordinatorResponseHandler extends RequestFutureAdapter<ClientResponse, Void> {
+    private class FindCoordinatorResponseHandler extends RequestFutureAdapter<ClientResponse, Void> {
 
         @Override
         public void onSuccess(ClientResponse resp, RequestFuture<Void> future) {
-            log.debug("Received GroupCoordinator response {}", resp);
+            log.debug("Received FindCoordinator response {}", resp);
+            clearFindCoordinatorFuture();
 
             FindCoordinatorResponse findCoordinatorResponse = (FindCoordinatorResponse) resp.responseBody();
-            // use MAX_VALUE - node.id as the coordinator id to mimic separate connections
-            // for the coordinator in the underlying network client layer
-            // TODO: this needs to be better handled in KAFKA-1935
             Errors error = findCoordinatorResponse.error();
-            clearFindCoordinatorFuture();
             if (error == Errors.NONE) {
                 synchronized (AbstractCoordinator.this) {
+                    // use MAX_VALUE - node.id as the coordinator id to allow separate connections
+                    // for the coordinator in the underlying network client layer
+                    int coordinatorConnectionId = Integer.MAX_VALUE - findCoordinatorResponse.node().id();
+
                     AbstractCoordinator.this.coordinator = new Node(
-                            Integer.MAX_VALUE - findCoordinatorResponse.node().id(),
+                            coordinatorConnectionId,
                             findCoordinatorResponse.node().host(),
                             findCoordinatorResponse.node().port());
-                    log.info("Discovered coordinator {}", coordinator);
+                    log.info("Discovered group coordinator {}", coordinator);
                     client.tryConnect(coordinator);
                     heartbeat.resetTimeouts(time.milliseconds());
                 }
@@ -646,11 +648,16 @@ public abstract class AbstractCoordinator implements Closeable {
     protected synchronized void coordinatorDead() {
         if (this.coordinator != null) {
             log.info("Marking the coordinator {} dead", this.coordinator);
+            Node oldCoordinator = this.coordinator;
+
+            // Mark the coordinator dead before disconnecting requests since the callbacks for any pending
+            // requests may attempt to do likewise. This also prevents new requests from being sent to the
+            // coordinator while the disconnect is in progress.
+            this.coordinator = null;
 
             // Disconnect from the coordinator to ensure that there are no in-flight requests remaining.
             // Pending callbacks will be invoked with a DisconnectException.
-            client.disconnect(this.coordinator);
-            this.coordinator = null;
+            client.disconnect(oldCoordinator);
         }
     }
 
@@ -994,13 +1001,22 @@ public abstract class AbstractCoordinator implements Closeable {
                         }
                     }
                 }
+            } catch (AuthenticationException e) {
+                log.error("An authentication error occurred in the heartbeat thread", e);
+                this.failed.set(e);
+            } catch (GroupAuthorizationException e) {
+                log.error("A group authorization error occurred in the heartbeat thread", e);
+                this.failed.set(e);
             } catch (InterruptedException | InterruptException e) {
                 Thread.interrupted();
-                log.error("Unexpected interrupt received in heartbeat thread for group {}", groupId, e);
+                log.error("Unexpected interrupt received in heartbeat thread", e);
                 this.failed.set(new RuntimeException(e));
-            } catch (RuntimeException e) {
-                log.error("Heartbeat thread for group {} failed due to unexpected error", groupId, e);
-                this.failed.set(e);
+            } catch (Throwable e) {
+                log.error("Heartbeat thread failed due to unexpected error", e);
+                if (e instanceof RuntimeException)
+                    this.failed.set((RuntimeException) e);
+                else
+                    this.failed.set(new RuntimeException(e));
             } finally {
                 log.debug("Heartbeat thread has closed");
             }
