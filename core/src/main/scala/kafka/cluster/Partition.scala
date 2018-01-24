@@ -27,6 +27,7 @@ import kafka.controller.KafkaController
 import kafka.log.LogConfig
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server._
+import kafka.server.checkpoints.CheckpointPersistentCache
 import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
 import kafka.utils._
 import org.apache.kafka.common.TopicPartition
@@ -144,12 +145,16 @@ class Partition(val topic: String,
         val config = LogConfig.fromProps(logManager.defaultConfig.originals,
                                          AdminUtils.fetchEntityConfig(zkUtils, ConfigType.Topic, topic))
         val log = logManager.getOrCreateLog(topicPartition, config, isNew)
-        val checkpoint = replicaManager.highWatermarkCheckpoints(log.dir.getParent)
-        val offsetMap = checkpoint.read
-        if (!offsetMap.contains(topicPartition))
-          info(s"No checkpointed highwatermark is found for partition $topicPartition")
-        val offset = math.min(offsetMap.getOrElse(topicPartition, 0L), log.logEndOffset)
-        new Replica(replicaId, topicPartition, time, offset, Some(log))
+        val checkpoint = replicaManager.highWatermarkCheckpoints(log.dir.getParent).getCheckpoint(topicPartition)
+        val offset: Long = checkpoint match {
+          case Some(off) => off
+          case None => {
+            info(s"No checkpointed highwatermark is found for partition $topicPartition")
+            0L
+          }
+        }
+
+        new Replica(replicaId, topicPartition, time, math.min(offset, log.logEndOffset), Some(log))
       } else new Replica(replicaId, topicPartition, time)
     })
   }
