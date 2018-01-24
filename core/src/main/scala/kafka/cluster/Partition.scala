@@ -218,12 +218,16 @@ class Partition(val topicPartition: TopicPartition,
         val props = adminZkClient.fetchEntityConfig(ConfigType.Topic, topic)
         val config = LogConfig.fromProps(logManager.currentDefaultConfig.originals, props)
         val log = logManager.getOrCreateLog(topicPartition, config, isNew, replicaId == Request.FutureLocalReplicaId)
-        val checkpoint = replicaManager.highWatermarkCheckpoints(log.dir.getParent)
-        val offsetMap = checkpoint.read()
-        if (!offsetMap.contains(topicPartition))
-          info(s"No checkpointed highwatermark is found for partition $topicPartition")
-        val offset = math.min(offsetMap.getOrElse(topicPartition, 0L), log.logEndOffset)
-        new Replica(replicaId, topicPartition, time, offset, Some(log))
+        val checkpoint = replicaManager.highWatermarkCheckpoints(log.dir.getParent).getCheckpoint(topicPartition)
+        val offset: Long = checkpoint match {
+          case Some(off) => off
+          case None => {
+            info(s"No checkpointed highwatermark is found for partition $topicPartition")
+            0L
+          }
+        }
+
+        new Replica(replicaId, topicPartition, time, math.min(offset, log.logEndOffset), Some(log))
       } else new Replica(replicaId, topicPartition, time)
     })
   }
