@@ -467,7 +467,16 @@ public class Selector implements Selectable, AutoCloseable {
                     log.debug("Connection with {} disconnected", desc, e);
                 else
                     log.warn("Unexpected error from {}; closing connection", desc, e);
-                close(channel, true);
+                try {
+                    close(channel, true);
+                } catch (Exception closeException) {
+                    e.addSuppressed(closeException);
+                    if (log.isDebugEnabled()) {
+                        log.debug("exception in poll, followed by failure to close channel", e);
+                    } else {
+                        log.warn("exception in poll (" + e.getMessage() + ") followed by exception in close (" + closeException.getMessage() + ")");
+                    }
+                }
             } finally {
                 maybeRecordTimePerConnection(channel, channelStartTimeNanos);
             }
