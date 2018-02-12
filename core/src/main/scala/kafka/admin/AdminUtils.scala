@@ -24,8 +24,9 @@ import kafka.utils.ZkUtils._
 import java.util.Random
 import java.util.Properties
 
-import kafka.common.TopicAlreadyMarkedForDeletionException
-import org.apache.kafka.common.errors.{InvalidPartitionsException, InvalidReplicaAssignmentException, InvalidReplicationFactorException, InvalidTopicException, TopicExistsException, UnknownTopicOrPartitionException}
+import kafka.cluster.Broker
+import kafka.common.{TopicAlreadyMarkedForDeletionException}
+import org.apache.kafka.common.errors._
 
 import scala.collection._
 import scala.collection.JavaConverters._
@@ -33,7 +34,13 @@ import scala.collection.mutable
 import collection.Map
 import collection.Set
 import org.I0Itec.zkclient.exception.ZkNodeExistsException
+import org.apache.kafka.common.Node
 import org.apache.kafka.common.internals.Topic
+import org.apache.kafka.common.network.ListenerName
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.requests.MetadataResponse
+
+import scala.collection.mutable.ListBuffer
 
 trait AdminUtilities {
   def changeTopicConfig(zkUtils: ZkUtils, topic: String, configs: Properties)
@@ -651,6 +658,87 @@ object AdminUtils extends Logging with AdminUtilities {
     entityPaths(zkUtils, None)
       .flatMap(entity => entityPaths(zkUtils, Some(entity + '/' + childEntityType)))
       .map(entityPath => (entityPath, fetchEntityConfig(zkUtils, rootEntityType, entityPath))).toMap
+  }
+
+  @deprecated("this method will be removed", "0.10")
+  def fetchTopicMetadataFromZk(topics: Set[String], zkUtils: ZkUtils, listenerName: ListenerName): Set[MetadataResponse.TopicMetadata] = {
+    val cachedBrokerInfo = mutable.Map.empty[Int, Broker]
+    topics.map(topic => fetchTopicMetadataFromZk(topic, zkUtils, cachedBrokerInfo, listenerName))
+  }
+
+  private def fetchTopicMetadataFromZk(topic: String,
+                                       zkUtils: ZkUtils,
+                                       cachedBrokerInfo: mutable.Map[Int, Broker],
+                                       listenerName: ListenerName): MetadataResponse.TopicMetadata = {
+    if (zkUtils.pathExists(getTopicPath(topic))) {
+      val topicPartitionAssignment = zkUtils.getPartitionAssignmentForTopics(List(topic))(topic)
+      val sortedPartitions = topicPartitionAssignment.toList.sortWith((m1, m2) => m1._1 < m2._1)
+      val partitionMetadata = sortedPartitions.map { partitionMap =>
+        val partition = partitionMap._1
+        val replicas = partitionMap._2
+        val inSyncReplicas = zkUtils.getInSyncReplicasForPartition(topic, partition)
+        val leader = zkUtils.getLeaderForPartition(topic, partition)
+        debug("replicas = " + replicas + ", in sync replicas = " + inSyncReplicas + ", leader = " + leader)
+
+        var leaderInfo: Node = Node.noNode()
+        var replicaInfo: Seq[Node] = Nil
+        var isrInfo: Seq[Node] = Nil
+        try {
+          leaderInfo = leader match {
+            case Some(l) =>
+              try {
+                getBrokerInfoFromCache(zkUtils, cachedBrokerInfo, List(l)).head.getNode(listenerName)
+              } catch {
+                case e: Throwable => throw new LeaderNotAvailableException("Leader not available for partition [%s,%d]".format(topic, partition), e)
+              }
+            case None => throw new LeaderNotAvailableException("No leader exists for partition " + partition)
+          }
+          try {
+            replicaInfo = getBrokerInfoFromCache(zkUtils, cachedBrokerInfo, replicas).map(_.getNode(listenerName))
+            isrInfo = getBrokerInfoFromCache(zkUtils, cachedBrokerInfo, inSyncReplicas).map(_.getNode(listenerName))
+          } catch {
+            case e: Throwable => throw new ReplicaNotAvailableException(e)
+          }
+          if (replicaInfo.size < replicas.size)
+            throw new ReplicaNotAvailableException("Replica information not available for following brokers: " +
+              replicas.filterNot(replicaInfo.map(_.id).contains(_)).mkString(","))
+          if (isrInfo.size < inSyncReplicas.size)
+            throw new ReplicaNotAvailableException("In Sync Replica information not available for following brokers: " +
+              inSyncReplicas.filterNot(isrInfo.map(_.id).contains(_)).mkString(","))
+          new MetadataResponse.PartitionMetadata(Errors.NONE, partition, leaderInfo, replicaInfo.asJava, isrInfo.asJava, Seq.empty[Node].asJava)
+        } catch {
+          case e: Throwable =>
+            debug("Error while fetching metadata for partition [%s,%d]".format(topic, partition), e)
+            new MetadataResponse.PartitionMetadata(Errors.forException(e), partition, leaderInfo, replicaInfo.asJava, isrInfo.asJava, Seq.empty[Node].asJava)
+        }
+      }
+      new MetadataResponse.TopicMetadata(Errors.NONE, topic, Topic.isInternal(topic), partitionMetadata.asJava)
+    } else {
+      // topic doesn't exist, send appropriate error code
+      new MetadataResponse.TopicMetadata(Errors.UNKNOWN_TOPIC_OR_PARTITION, topic, Topic.isInternal(topic), java.util.Collections.emptyList())
+    }
+  }
+
+  private def getBrokerInfoFromCache(zkUtils: ZkUtils,
+                                     cachedBrokerInfo: scala.collection.mutable.Map[Int, Broker],
+                                     brokerIds: Seq[Int]): Seq[Broker] = {
+    var failedBrokerIds: ListBuffer[Int] = new ListBuffer()
+    val brokerMetadata = brokerIds.map { id =>
+      val optionalBrokerInfo = cachedBrokerInfo.get(id)
+      optionalBrokerInfo match {
+        case Some(brokerInfo) => Some(brokerInfo) // return broker info from the cache
+        case None => // fetch it from zookeeper
+          zkUtils.getBrokerInfo(id) match {
+            case Some(brokerInfo) =>
+              cachedBrokerInfo += (id -> brokerInfo)
+              Some(brokerInfo)
+            case None =>
+              failedBrokerIds += id
+              None
+          }
+      }
+    }
+    brokerMetadata.filter(_.isDefined).map(_.get)
   }
 
   private def replicaIndex(firstReplicaIndex: Int, secondReplicaShift: Int, replicaIndex: Int, nBrokers: Int): Int = {
