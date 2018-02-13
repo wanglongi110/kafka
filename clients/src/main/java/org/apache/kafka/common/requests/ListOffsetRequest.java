@@ -79,7 +79,7 @@ public class ListOffsetRequest extends AbstractRequest {
             return new Builder(minVersion, null, CONSUMER_REPLICA_ID, isolationLevel);
         }
 
-        private Builder(short minVersion, Short desiredVersion, int replicaId, IsolationLevel isolationLevel) {
+        public Builder(short minVersion, Short desiredVersion, int replicaId, IsolationLevel isolationLevel) {
             super(ApiKeys.LIST_OFFSETS, desiredVersion);
             this.minVersion = minVersion;
             this.replicaId = replicaId;

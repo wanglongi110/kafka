@@ -102,7 +102,8 @@ class SSLConsumerFetcherThread(name: String,
   private def earliestOrLatestOffset(topicPartition: TopicPartition, earliestOrLatest: Long, consumerId: Int): Long = {
     val request = {
       val partitions = Map(topicPartition -> java.lang.Long.valueOf(earliestOrLatest))
-      ListOffsetRequest.Builder.forConsumer(false, IsolationLevel.READ_UNCOMMITTED).setTargetTimes(partitions.asJava)
+      val version: Short = 1
+      new ListOffsetRequest.Builder(0, version, ListOffsetRequest.CONSUMER_REPLICA_ID, IsolationLevel.READ_UNCOMMITTED).setTargetTimes(partitions.asJava)
     }
     val clientResponse = networkClient.sendRequest(sourceNode, ApiKeys.LIST_OFFSETS, request)
     val response = clientResponse.responseBody.asInstanceOf[ListOffsetResponse]
