@@ -63,6 +63,7 @@ abstract class BaseConsumerTest extends IntegrationTestHarness {
   this.consumerConfig.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest")
   this.consumerConfig.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false")
   this.consumerConfig.setProperty(ConsumerConfig.METADATA_MAX_AGE_CONFIG, "100")
+  this.consumerConfig.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "3")
 
   @Before
   override def setUp() {
