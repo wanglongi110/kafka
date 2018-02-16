@@ -38,7 +38,8 @@ import scala.math.ceil
  * @param maxIndexSize The maximum index size in bytes.
  */
 abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Long,
-                                   val maxIndexSize: Int = -1, val writable: Boolean) extends Logging {
+                                   val maxIndexSize: Int = -1, val writable: Boolean) {
+  import AbstractIndex._
 
   // Length of the index file
   @volatile
@@ -321,6 +322,9 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
    */
   private def roundDownToExactMultiple(number: Int, factor: Int) = factor * (number / factor)
 
+}
+
+object AbstractIndex extends Logging {
 }
 
 object IndexSearchType extends Enumeration {

@@ -51,6 +51,7 @@ import kafka.common.InvalidOffsetException
 // Avoid shadowing mutable `file` in AbstractIndex
 class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writable: Boolean = true)
     extends AbstractIndex[Long, Int](_file, baseOffset, maxIndexSize, writable) {
+  import AbstractIndex._
 
   override def entrySize = 8
 
