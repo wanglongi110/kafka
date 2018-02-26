@@ -95,6 +95,23 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
     }
   }
 
+  /**
+    * Package private for unit test. Get the cleaning state of the partition.
+    */
+  private[log] def cleaningState(tp: TopicPartition): Option[LogCleaningState] = {
+    inLock(lock) {
+      inProgress.get(tp)
+    }
+  }
+
+  /**
+    * Package private for unit test. Set the cleaning state of the partition.
+    */
+  private[log] def setCleaningState(tp: TopicPartition, state: LogCleaningState): Unit = {
+    inLock(lock) {
+      inProgress.put(tp, state)
+    }
+  }
 
    /**
     * Choose the log to clean next and add it to the in-progress set. We recompute this
@@ -270,11 +287,11 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
    */
   def doneCleaning(topicPartition: TopicPartition, dataDir: File, endOffset: Long) {
     inLock(lock) {
-      inProgress(topicPartition) match {
-        case LogCleaningInProgress =>
+      inProgress.get(topicPartition) match {
+        case Some(LogCleaningInProgress) =>
           updateCheckpoints(dataDir, Option(topicPartition, endOffset))
           inProgress.remove(topicPartition)
-        case LogCleaningAborted =>
+        case Some(LogCleaningAborted) =>
           inProgress.put(topicPartition, LogCleaningPaused)
           pausedCleaningCond.signalAll()
         case s =>
@@ -285,7 +302,15 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
 
   def doneDeleting(topicPartition: TopicPartition): Unit = {
     inLock(lock) {
-      inProgress.remove(topicPartition)
+      inProgress.get(topicPartition) match {
+        case Some(LogCleaningInProgress) =>
+          inProgress.remove(topicPartition)
+        case Some(LogCleaningAborted) =>
+          inProgress.put(topicPartition, LogCleaningPaused)
+          pausedCleaningCond.signalAll()
+        case s =>
+          throw new IllegalStateException(s"In-progress partition $topicPartition cannot be in $s state.")
+      }
     }
   }
 }
