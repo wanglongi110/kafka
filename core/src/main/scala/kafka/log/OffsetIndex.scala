@@ -56,24 +56,32 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
   override def entrySize = 8
 
   /* the last offset in the index */
-  private[this] var _lastOffset = lastEntry.offset
+  private[this] var _lastOffset: Option[Long] = None
 
   debug("Loaded index file %s with maxEntries = %d, maxIndexSize = %d, entries = %d, lastOffset = %d, file position = %d"
-    .format(file.getAbsolutePath, maxEntries, maxIndexSize, _entries, _lastOffset, mmap.position()))
+    .format(file.getAbsolutePath, maxEntries, maxIndexSize, entries, lastOffset, mmap.position()))
 
   /**
    * The last entry in the index
    */
   private def lastEntry: OffsetPosition = {
     inLock(lock) {
-      _entries match {
+      entries match {
         case 0 => OffsetPosition(baseOffset, 0)
         case s => parseEntry(mmap, s - 1).asInstanceOf[OffsetPosition]
       }
     }
   }
 
-  def lastOffset: Long = _lastOffset
+  def lastOffset: Long = {
+    if (_lastOffset.isEmpty) {
+      inLock(lock) {
+        if (_lastOffset.isEmpty)
+          _lastOffset = Some(lastEntry.offset)
+      }
+    }
+    _lastOffset.get
+  }
 
   /**
    * Find the largest offset less than or equal to the given targetOffset
@@ -116,7 +124,7 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
   private def physical(buffer: ByteBuffer, n: Int): Int = buffer.getInt(n * entrySize + 4)
 
   override def parseEntry(buffer: ByteBuffer, n: Int): IndexEntry = {
-      OffsetPosition(baseOffset + relativeOffset(buffer, n), physical(buffer, n))
+    OffsetPosition(baseOffset + relativeOffset(buffer, n), physical(buffer, n))
   }
 
   /**
@@ -126,8 +134,8 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    */
   def entry(n: Int): OffsetPosition = {
     maybeLock(lock) {
-      if(n >= _entries)
-        throw new IllegalArgumentException("Attempt to fetch the %dth entry from an index of size %d.".format(n, _entries))
+      if(n >= entries)
+        throw new IllegalArgumentException("Attempt to fetch the %dth entry from an index of size %d.".format(n, entries))
       val idx = mmap.duplicate
       OffsetPosition(relativeOffset(idx, n), physical(idx, n))
     }
@@ -138,17 +146,17 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    */
   def append(offset: Long, position: Int) {
     inLock(lock) {
-      require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")
-      if (_entries == 0 || offset > _lastOffset) {
+      require(!isFull, "Attempt to append to a full index (size = " + entries + ").")
+      if (entries == 0 || offset > lastOffset) {
         debug("Adding index entry %d => %d to %s.".format(offset, position, file.getName))
         mmap.putInt((offset - baseOffset).toInt)
         mmap.putInt(position)
-        _entries += 1
-        _lastOffset = offset
-        require(_entries * entrySize == mmap.position(), entries + " entries but file position in index is " + mmap.position() + ".")
+        _entries = Some(entries + 1)
+        _lastOffset = Some(offset)
+        require(entries * entrySize == mmap.position(), entries + " entries but file position in index is " + mmap.position() + ".")
       } else {
         throw new InvalidOffsetException("Attempt to append an offset (%d) to position %d no larger than the last offset appended (%d) to %s."
-          .format(offset, entries, _lastOffset, file.getAbsolutePath))
+          .format(offset, entries, lastOffset, file.getAbsolutePath))
       }
     }
   }
@@ -181,16 +189,16 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    */
   private def truncateToEntries(entries: Int) {
     inLock(lock) {
-      _entries = entries
-      mmap.position(_entries * entrySize)
-      _lastOffset = lastEntry.offset
+      _entries = Some(entries)
+      mmap.position(entries * entrySize)
+      _lastOffset = Some(lastEntry.offset)
     }
   }
 
   override def sanityCheck() {
-    require(_entries == 0 || _lastOffset > baseOffset,
+    require(entries == 0 || lastOffset > baseOffset,
             s"Corrupt index found, index file (${file.getAbsolutePath}) has non-zero size but the last offset " +
-                s"is ${_lastOffset} which is no larger than the base offset $baseOffset.")
+                s"is ${lastOffset} which is no larger than the base offset $baseOffset.")
     require(length % entrySize == 0,
             "Index file " + file.getAbsolutePath + " is corrupt, found " + length +
             " bytes which is not positive or not a multiple of 8.")

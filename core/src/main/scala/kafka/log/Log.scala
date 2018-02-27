@@ -312,22 +312,9 @@ class Log(@volatile var dir: File,
           fileAlreadyExists = true)
 
         if (indexFileExists) {
-          try {
-            segment.index.sanityCheck()
-            // Resize the time index file to 0 if it is newly created.
-            if (!timeIndexFileExists)
-              segment.timeIndex.resize(0)
-            segment.timeIndex.sanityCheck()
-            segment.txnIndex.sanityCheck()
-          } catch {
-            case e: java.lang.IllegalArgumentException =>
-              warn(s"Found a corrupted index file due to ${e.getMessage}}. deleting ${timeIndexFile.getAbsolutePath}, " +
-                s"${indexFile.getAbsolutePath}, and ${txnIndexFile.getAbsolutePath} and rebuilding index...")
-              Files.deleteIfExists(timeIndexFile.toPath)
-              Files.delete(indexFile.toPath)
-              segment.txnIndex.delete()
-              recoverSegment(segment)
-          }
+          // Resize the time index file to 0 if it is newly created.
+          if (!timeIndexFileExists)
+            segment.timeIndex.resize(0)
         } else {
           error("Could not find offset index file corresponding to log file %s, rebuilding index...".format(segment.log.file.getAbsolutePath))
           recoverSegment(segment)
@@ -335,12 +322,67 @@ class Log(@volatile var dir: File,
         segments.put(startOffset, segment)
       }
     }
+    if (!segments.isEmpty)
+      sanityCheckSegmentMaybeFromBeginning(activeSegment)
+  }
+
+  // Sanity check all segments of this log
+  def sanityCheckSegments(): Int = {
+    segments.keySet().asScala.foreach( baseOffset => {
+        val segment = segments.get(baseOffset)
+        if (segment != null)
+          sanityCheckSegment(segment)
+      }
+    )
+    segments.size()
+  }
+
+  // If the given segment failed sanity check, sanity check all segments from the earliest up to the given segment
+  private def sanityCheckSegmentMaybeFromBeginning(segment: LogSegment) {
+    if (segment.sanityChecked)
+      return
+
+    try {
+      lock synchronized {
+        segment.index.sanityCheck()
+        segment.timeIndex.sanityCheck()
+        segment.txnIndex.sanityCheck()
+      }
+    } catch {
+      case e: java.lang.IllegalArgumentException =>
+        // This includes all segments of the partition
+        logSegments(0, segment.baseOffset + 1, false).foreach(sanityCheckSegment)
+    }
+    segment.sanityChecked = true
+  }
+
+  // Sanity check the given segment
+  private def sanityCheckSegment(segment: LogSegment) {
+    if (segment.sanityChecked)
+      return
+
+    lock synchronized {
+      try {
+        segment.index.sanityCheck()
+        segment.timeIndex.sanityCheck()
+        segment.txnIndex.sanityCheck()
+      } catch {
+        case e: java.lang.IllegalArgumentException =>
+          warn(s"Found a corrupted index file due to ${e.getMessage}}. deleting ${segment.timeIndex.file.getAbsolutePath}, " +
+            s"${segment.index.file.getAbsolutePath}, and ${segment.txnIndex.file.getAbsolutePath} and rebuilding index...")
+          Files.deleteIfExists(segment.timeIndex.file.toPath)
+          Files.delete(segment.index.file.toPath)
+          segment.txnIndex.delete()
+          recoverSegment(segment)
+      }
+      segment.sanityChecked = true
+    }
   }
 
   private def recoverSegment(segment: LogSegment, leaderEpochCache: Option[LeaderEpochCache] = None): Int = lock synchronized {
     val stateManager = new ProducerStateManager(topicPartition, dir, maxProducerIdExpirationMs)
     stateManager.truncateAndReload(logStartOffset, segment.baseOffset, time.milliseconds, deleteFilesAboveMaxSnapshotOffset = false)
-    logSegments(stateManager.mapEndOffset, segment.baseOffset).foreach { segment =>
+    logSegments(stateManager.mapEndOffset, segment.baseOffset, false).foreach { segment =>
       val startOffset = math.max(segment.baseOffset, stateManager.mapEndOffset)
       val fetchDataInfo = segment.read(startOffset, None, Int.MaxValue)
       if (fetchDataInfo != null)
@@ -565,6 +607,7 @@ class Log(@volatile var dir: File,
 
   /**
    * Append this message set to the active segment of the log, assigning offsets and Partition Leader Epochs
+   *
    * @param records The records to append
    * @param isFromClient Whether or not this append is from a producer
    * @throws KafkaStorageException If the append fails due to an I/O error.
@@ -576,6 +619,7 @@ class Log(@volatile var dir: File,
 
   /**
    * Append this message set to the active segment of the log without assigning offsets or Partition Leader Epochs
+   *
    * @param records The records to append
    * @throws KafkaStorageException If the append fails due to an I/O error.
    * @return Information about the appended messages including the first and last offset.
@@ -812,6 +856,7 @@ class Log(@volatile var dir: File,
       case Some(logOffsetMetadata) if logOffsetMetadata.messageOffsetOnly || logOffsetMetadata.messageOffset < logStartOffset =>
         val offset = math.max(logOffsetMetadata.messageOffset, logStartOffset)
         val segment = segments.floorEntry(offset).getValue
+        sanityCheckSegmentMaybeFromBeginning(segment)
         val position  = segment.translateOffset(offset)
         Some(LogOffsetMetadata(offset, segment.baseOffset, position.position))
       case other => other
@@ -990,7 +1035,6 @@ class Log(@volatile var dir: File,
    *                       of aborted transactions in the fetch range which the consumer uses to filter the fetched
    *                       records before they are returned to the user. Note that fetches from followers always use
    *                       READ_UNCOMMITTED.
-   *
    * @throws OffsetOutOfRangeException If startOffset is beyond the log end offset or before the log start offset
    * @return The fetch data information including fetch starting offset metadata and messages read.
    */
@@ -1012,6 +1056,8 @@ class Log(@volatile var dir: File,
       }
 
       var segmentEntry = segments.floorEntry(startOffset)
+      if (segmentEntry != null)
+        sanityCheckSegmentMaybeFromBeginning(segmentEntry.getValue)
 
       // return error on attempt to read beyond the log end offset or read below log start offset
       if (startOffset > next || segmentEntry == null || startOffset < logStartOffset)
@@ -1043,6 +1089,8 @@ class Log(@volatile var dir: File,
         val fetchInfo = segment.read(startOffset, maxOffset, maxLength, maxPosition, minOneMessage)
         if (fetchInfo == null) {
           segmentEntry = segments.higherEntry(segmentEntry.getKey)
+          if (segmentEntry != null)
+            sanityCheckSegmentMaybeFromBeginning(segmentEntry.getValue)
         } else {
           return isolationLevel match {
             case IsolationLevel.READ_UNCOMMITTED => fetchInfo
@@ -1060,6 +1108,8 @@ class Log(@volatile var dir: File,
 
   private[log] def collectAbortedTransactions(startOffset: Long, upperBoundOffset: Long): List[AbortedTxn] = {
     val segmentEntry = segments.floorEntry(startOffset)
+    if (segmentEntry != null)
+      sanityCheckSegmentMaybeFromBeginning(segmentEntry.getValue)
     val allAbortedTxns = ListBuffer.empty[AbortedTxn]
     def accumulator(abortedTxns: List[AbortedTxn]): Unit = allAbortedTxns ++= abortedTxns
     collectAbortedTransactions(logStartOffset, upperBoundOffset, segmentEntry, accumulator)
@@ -1073,9 +1123,10 @@ class Log(@volatile var dir: File,
       fetchInfo.fetchOffsetMetadata.relativePositionInSegment)
     val upperBoundOffset = segmentEntry.getValue.fetchUpperBoundOffset(startOffsetPosition, fetchSize).getOrElse {
       val nextSegmentEntry = segments.higherEntry(segmentEntry.getKey)
-      if (nextSegmentEntry != null)
+      if (nextSegmentEntry != null) {
+        sanityCheckSegmentMaybeFromBeginning(nextSegmentEntry.getValue)
         nextSegmentEntry.getValue.baseOffset
-      else
+      } else
         logEndOffset
     }
 
@@ -1130,6 +1181,7 @@ class Log(@volatile var dir: File,
       // Cache to avoid race conditions. `toBuffer` is faster than most alternatives and provides
       // constant time access while being safe to use with concurrent collections unlike `toArray`.
       val segmentsCopy = logSegments.toBuffer
+      segmentsCopy.foreach(sanityCheckSegmentMaybeFromBeginning)
       // For the earliest and latest, we do not need to return the timestamp.
       if (targetTimestamp == ListOffsetRequest.EARLIEST_TIMESTAMP)
         return Some(TimestampOffset(RecordBatch.NO_TIMESTAMP, logStartOffset))
@@ -1219,7 +1271,10 @@ class Log(@volatile var dir: File,
       var segmentEntry = segments.firstEntry
       while (segmentEntry != null) {
         val segment = segmentEntry.getValue
+        sanityCheckSegmentMaybeFromBeginning(segment)
         val nextSegmentEntry = segments.higherEntry(segmentEntry.getKey)
+        if (nextSegmentEntry != null)
+          sanityCheckSegmentMaybeFromBeginning(nextSegmentEntry.getValue)
         val (nextSegment, upperBoundOffset, isLastSegmentAndEmpty) = if (nextSegmentEntry != null)
           (nextSegmentEntry.getValue, nextSegmentEntry.getValue.baseOffset, false)
         else
@@ -1353,6 +1408,7 @@ class Log(@volatile var dir: File,
           case null =>
           case entry => {
             val seg = entry.getValue
+            sanityCheckSegmentMaybeFromBeginning(seg)
             seg.onBecomeInactiveSegment()
             seg.index.trimToValidSize()
             seg.timeIndex.trimToValidSize()
@@ -1438,8 +1494,10 @@ class Log(@volatile var dir: File,
     // previous segment just after rolling the new segment.
     var minSnapshotOffset = activeSegment.baseOffset
     val previousSegment = segments.lowerEntry(activeSegment.baseOffset)
-    if (previousSegment != null)
+    if (previousSegment != null) {
+      sanityCheckSegmentMaybeFromBeginning(previousSegment.getValue)
       minSnapshotOffset = previousSegment.getValue.baseOffset
+    }
     math.min(flushedOffset, minSnapshotOffset)
   }
 
@@ -1565,14 +1623,17 @@ class Log(@volatile var dir: File,
    * Get all segments beginning with the segment that includes "from" and ending with the segment
    * that includes up to "to-1" or the end of the log (if to > logEndOffset)
    */
-  def logSegments(from: Long, to: Long): Iterable[LogSegment] = {
-    lock synchronized {
+  def logSegments(from: Long, to: Long, needSanityCheck: Boolean = true): Iterable[LogSegment] = {
+    val values = lock synchronized {
       val floor = segments.floorKey(from)
-      if(floor eq null)
+      if (floor eq null)
         segments.headMap(to).values.asScala
       else
         segments.subMap(floor, true, to, false).values.asScala
     }
+    if (needSanityCheck)
+      values.foreach(sanityCheckSegmentMaybeFromBeginning)
+    values
   }
 
   override def toString = "Log(" + dir + ")"

@@ -65,9 +65,26 @@ class LogSegment(val log: FileRecords,
   /* The timestamp we used for time based log rolling */
   private var rollingBasedTimestamp: Option[Long] = None
 
+  @volatile var sanityChecked: Boolean = false
+
   /* The maximum timestamp we see so far */
-  @volatile private var maxTimestampSoFar: Long = timeIndex.lastEntry.timestamp
-  @volatile private var offsetOfMaxTimestamp: Long = timeIndex.lastEntry.offset
+  @volatile private var _maxTimestampSoFar: Long = -1L
+
+  private def maxTimestampSoFar: Long = {
+    if (_maxTimestampSoFar < 0) {
+      _maxTimestampSoFar = timeIndex.lastEntry.timestamp
+    }
+    _maxTimestampSoFar
+  }
+
+  @volatile private var _offsetOfMaxTimestamp: Long = -1L
+
+  private def offsetOfMaxTimestamp: Long = {
+    if (_offsetOfMaxTimestamp < 0) {
+      _offsetOfMaxTimestamp = timeIndex.lastEntry.offset
+    }
+    _offsetOfMaxTimestamp
+  }
 
   def this(dir: File, startOffset: Long, indexIntervalBytes: Int, maxIndexSize: Int, rollJitterMs: Long, time: Time,
            fileAlreadyExists: Boolean = false, initFileSize: Int = 0, preallocate: Boolean = false) =
@@ -121,8 +138,8 @@ class LogSegment(val log: FileRecords,
       trace(s"Appended $appendedBytes to ${log.file()} at offset $firstOffset")
       // Update the in memory max timestamp and corresponding offset.
       if (largestTimestamp > maxTimestampSoFar) {
-        maxTimestampSoFar = largestTimestamp
-        offsetOfMaxTimestamp = shallowOffsetOfMaxTimestamp
+        _maxTimestampSoFar = largestTimestamp
+        _offsetOfMaxTimestamp = shallowOffsetOfMaxTimestamp
       }
       // append an entry to the index (if needed)
       if(bytesSinceLastIndexEntry > indexIntervalBytes) {
@@ -236,8 +253,8 @@ class LogSegment(val log: FileRecords,
       firstEntryIncomplete = adjustedMaxSize < startOffsetAndSize.size)
   }
 
-   def fetchUpperBoundOffset(startOffsetPosition: OffsetPosition, fetchSize: Int): Option[Long] =
-     index.fetchUpperBoundOffset(startOffsetPosition, fetchSize).map(_.offset)
+  def fetchUpperBoundOffset(startOffsetPosition: OffsetPosition, fetchSize: Int): Option[Long] =
+    index.fetchUpperBoundOffset(startOffsetPosition, fetchSize).map(_.offset)
 
   /**
    * Run recovery on the given segment. This will rebuild the index from the log file and lop off any invalid bytes
@@ -257,15 +274,15 @@ class LogSegment(val log: FileRecords,
     txnIndex.truncate()
     var validBytes = 0
     var lastIndexEntry = 0
-    maxTimestampSoFar = RecordBatch.NO_TIMESTAMP
+    _maxTimestampSoFar = RecordBatch.NO_TIMESTAMP
     try {
       for (batch <- log.batches.asScala) {
         batch.ensureValid()
 
         // The max timestamp is exposed at the batch level, so no need to iterate the records
         if (batch.maxTimestamp > maxTimestampSoFar) {
-          maxTimestampSoFar = batch.maxTimestamp
-          offsetOfMaxTimestamp = batch.lastOffset
+          _maxTimestampSoFar = batch.maxTimestamp
+          _offsetOfMaxTimestamp = batch.lastOffset
         }
 
         // Build offset index
@@ -305,15 +322,15 @@ class LogSegment(val log: FileRecords,
   private def loadLargestTimestamp() {
     // Get the last time index entry. If the time index is empty, it will return (-1, baseOffset)
     val lastTimeIndexEntry = timeIndex.lastEntry
-    maxTimestampSoFar = lastTimeIndexEntry.timestamp
-    offsetOfMaxTimestamp = lastTimeIndexEntry.offset
+    _maxTimestampSoFar = lastTimeIndexEntry.timestamp
+    _offsetOfMaxTimestamp = lastTimeIndexEntry.offset
 
     val offsetPosition = index.lookup(lastTimeIndexEntry.offset)
     // Scan the rest of the messages to see if there is a larger timestamp after the last time index entry.
     val maxTimestampOffsetAfterLastEntry = log.largestTimestampAfter(offsetPosition.position)
     if (maxTimestampOffsetAfterLastEntry.timestamp > lastTimeIndexEntry.timestamp) {
-      maxTimestampSoFar = maxTimestampOffsetAfterLastEntry.timestamp
-      offsetOfMaxTimestamp = maxTimestampOffsetAfterLastEntry.offset
+      _maxTimestampSoFar = maxTimestampOffsetAfterLastEntry.timestamp
+      _offsetOfMaxTimestamp = maxTimestampOffsetAfterLastEntry.offset
     }
   }
 

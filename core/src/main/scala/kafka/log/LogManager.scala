@@ -20,6 +20,7 @@ package kafka.log
 import java.io._
 import java.nio.file.Files
 import java.util.concurrent._
+import java.util.concurrent.atomic.AtomicInteger
 
 import com.yammer.metrics.core.Gauge
 import kafka.admin.AdminUtils
@@ -30,8 +31,8 @@ import kafka.server.checkpoints.OffsetCheckpointFile
 import kafka.server.{BrokerState, RecoveringFromUncleanShutdown, _}
 import kafka.utils._
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.utils.Time
-import org.apache.kafka.common.errors.{LogDirNotFoundException, KafkaStorageException}
+import org.apache.kafka.common.utils.{KafkaThread, Time}
+import org.apache.kafka.common.errors.{KafkaStorageException, LogDirNotFoundException}
 
 import scala.collection.JavaConverters._
 import scala.collection._
@@ -64,7 +65,8 @@ class LogManager(logDirs: Array[File],
                  brokerTopicStats: BrokerTopicStats,
                  logDirFailureChannel: LogDirFailureChannel,
                  time: Time,
-                 interBrokerProtocolVersion: ApiVersion) extends Logging with KafkaMetricsGroup {
+                 interBrokerProtocolVersion: ApiVersion,
+                 sanityCheckLogsOnStartupEnabled: Boolean) extends Logging with KafkaMetricsGroup {
   val RecoveryPointCheckpointFile = "recovery-point-offset-checkpoint"
   val LogStartOffsetCheckpointFile = "log-start-offset-checkpoint"
   val LockFile = ".lock"
@@ -75,6 +77,12 @@ class LogManager(logDirs: Array[File],
   private val logsToBeDeleted = new LinkedBlockingQueue[Log]()
 
   private val _liveLogDirs: ConcurrentLinkedQueue[File] = createAndValidateLogDirs(logDirs, initialOfflineDirs)
+
+  private val numPartitionsForSanityCheck: AtomicInteger = new AtomicInteger(0)
+  private val threadsForSanityCheck = mutable.ListBuffer.empty[KafkaThread]
+  private val partitionsAlreadySanityChecked = mutable.Set.empty[TopicPartition]
+  private val newPartitionsForSanityCheck = mutable.Map.empty[String, LinkedBlockingQueue[TopicPartition]]
+  @volatile private var isShuttingDown = false
 
   def liveLogDirs: Array[File] = {
     if (_liveLogDirs.size == logDirs.size)
@@ -106,6 +114,13 @@ class LogManager(logDirs: Array[File],
     "OfflineLogDirectoryCount",
     new Gauge[Int] {
       def value = offlineLogDirs.length
+    }
+  )
+
+  newGauge(
+    "numPartitionsForSanityCheck",
+    new Gauge[Int] {
+      def value = numPartitionsForSanityCheck.get()
     }
   )
 
@@ -229,6 +244,9 @@ class LogManager(logDirs: Array[File],
       brokerTopicStats = brokerTopicStats,
       logDirFailureChannel = logDirFailureChannel)
 
+    if (sanityCheckLogsOnStartupEnabled)
+      current.sanityCheckSegments()
+
     if (logDir.getName.endsWith(Log.DeleteDirSuffix)) {
       this.logsToBeDeleted.add(current)
     } else {
@@ -329,6 +347,7 @@ class LogManager(logDirs: Array[File],
     } finally {
       threadPools.foreach(_.shutdown())
     }
+    initializeThreadsForSanityCheck()
 
     info(s"Logs loading complete in ${time.milliseconds - startMs} ms.")
   }
@@ -371,11 +390,90 @@ class LogManager(logDirs: Array[File],
       cleaner.startup()
   }
 
+  def scheduleLogsForSanityCheck(newLeaderPartitions: Set[TopicPartition]) {
+    if (sanityCheckLogsOnStartupEnabled)
+      return
+
+    val uncheckedPartitions = newLeaderPartitions.filterNot(partitionsAlreadySanityChecked)
+    uncheckedPartitions.foreach(partitionsAlreadySanityChecked.add)
+
+    info(s"Schedule sanity check for partitions ${uncheckedPartitions.mkString(",")}")
+    uncheckedPartitions.foreach(tp => {
+      val log = logs.get(tp)
+      if (log != null) {
+        val dir = log.dir.getParent
+        newPartitionsForSanityCheck(dir).put(tp)
+        numPartitionsForSanityCheck.incrementAndGet()
+      }
+    })
+  }
+
+  private def sanityCheckLog(newLeaderPartitions: LinkedBlockingQueue[TopicPartition], dir: String) {
+    while (!isShuttingDown) {
+      val tp = newLeaderPartitions.take()
+      if (tp.partition() < 0) {
+        info(s"${Thread.currentThread().getName} will stop on LogManager shutdown.")
+        return
+      }
+
+      val log = logs.get(tp)
+      numPartitionsForSanityCheck.decrementAndGet()
+
+      if (log != null) {
+        val startMs = time.milliseconds
+        try {
+          val segmentNum = log.sanityCheckSegments()
+          info(s"Completed sanity check for log $tp with $segmentNum log segments in ${time.milliseconds - startMs} ms. " +
+            s"Remaining ${numPartitionsForSanityCheck.get()} leader partitions for sanity check.")
+        } catch {
+          case e: IOException =>
+            logDirFailureChannel.maybeAddOfflineLogDir(dir, s"Error while sanity checking log $dir", e)
+          case e: Throwable =>
+            fatal("Fatal error during log sanity check. Shutdown broker now.", e)
+            Exit.halt(1)
+        }
+      }
+    }
+  }
+
+  private def initializeThreadsForSanityCheck() {
+    info("Starting threads to sanity check logs for new leader partitions.")
+
+    if (sanityCheckLogsOnStartupEnabled)
+      return
+
+    var id = 0
+    for (dir <- liveLogDirs) {
+      val newLeaderPartitions = new LinkedBlockingQueue[TopicPartition]()
+      newPartitionsForSanityCheck.put(dir.getAbsolutePath, newLeaderPartitions)
+
+      for (i <- 0 until ioThreads) {
+        id += 1
+        val thread = KafkaThread.daemon(s"kafka-log-sanity-check-$id", new Runnable {
+          override def run(): Unit = {
+            sanityCheckLog(newLeaderPartitions, dir.getAbsolutePath)
+          }
+        })
+        threadsForSanityCheck.append(thread)
+      }
+    }
+    threadsForSanityCheck.foreach(_.start())
+  }
+
   /**
    * Close all the logs
    */
   def shutdown() {
     info("Shutting down.")
+
+    isShuttingDown = true
+
+    // Tell kafka-log-sanity-check threads to stop
+    val stopThreadsForSanityCheck = new TopicPartition("", -1);
+    // Add ioThreads number of tokens to each queue (one queue per log directory)
+    // This ensures that all sanity check threads will exist since each thread will take at most one token
+    for (i <- 0 until ioThreads)
+      newPartitionsForSanityCheck.values.foreach(_.add(stopThreadsForSanityCheck))
 
     removeMetric("OfflineLogDirectoryCount")
     for (dir <- logDirs) {
@@ -435,6 +533,7 @@ class LogManager(logDirs: Array[File],
       dirLocks.foreach(_.destroy())
     }
 
+    threadsForSanityCheck.foreach(_.join())
     info("Shutdown complete.")
   }
 
@@ -806,6 +905,8 @@ object LogManager {
       brokerTopicStats = brokerTopicStats,
       logDirFailureChannel = logDirFailureChannel,
       time = time,
-      interBrokerProtocolVersion = config.interBrokerProtocolVersion)
+      interBrokerProtocolVersion = config.interBrokerProtocolVersion,
+      sanityCheckLogsOnStartupEnabled = config.sanityCheckLogsOnStartupEnabled
+    )
   }
 }

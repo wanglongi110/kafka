@@ -33,26 +33,44 @@ import scala.math.ceil
 /**
  * The abstract index class which holds entry format agnostic methods.
  *
- * @param file The index file
+ * @param _file The index file
  * @param baseOffset the base offset of the segment that this index is corresponding to.
  * @param maxIndexSize The maximum index size in bytes.
  */
-abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Long,
+abstract class AbstractIndex[K, V](@volatile private var _file: File, val baseOffset: Long,
                                    val maxIndexSize: Int = -1, val writable: Boolean) {
   import AbstractIndex._
 
+  def file: File = {
+    if (!initialized) {
+      inLock(lock) {
+        if (!initialized) {
+          initializeMmapAndLength
+        }
+      }
+    }
+    _file
+  }
+
+  def file_=(f: File) {
+    _file = f
+  }
+
   // Length of the index file
   @volatile
-  private var _length: Long = _
+  private var _length: Option[Long] = None
 
   protected def entrySize: Int
 
   protected val lock = new ReentrantLock
 
-  @volatile
-  protected var mmap: MappedByteBuffer = {
-    val newlyCreated = file.createNewFile()
-    val raf = if (writable) new RandomAccessFile(file, "rw") else new RandomAccessFile(file, "r")
+  @volatile protected var _mmap: MappedByteBuffer = null
+
+  @volatile var initialized = false
+
+  private def initializeMmapAndLength: Unit = {
+    val newlyCreated = _file.createNewFile()
+    val raf = if (writable) new RandomAccessFile(_file, "rw") else new RandomAccessFile(_file, "r")
     try {
       /* pre-allocate the file if necessary */
       if(newlyCreated) {
@@ -62,45 +80,84 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
       }
 
       /* memory-map the file */
-      _length = raf.length()
+      _length = Some(raf.length())
       val idx = {
         if (writable)
-          raf.getChannel.map(FileChannel.MapMode.READ_WRITE, 0, _length)
+          raf.getChannel.map(FileChannel.MapMode.READ_WRITE, 0, _length.get)
         else
-          raf.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, _length)
+          raf.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, _length.get)
       }
       /* set the position in the index for the next entry */
       if(newlyCreated)
         idx.position(0)
       else
-        // if this is a pre-existing index, assume it is valid and set position to last entry
+      // if this is a pre-existing index, assume it is valid and set position to last entry
         idx.position(roundDownToExactMultiple(idx.limit(), entrySize))
-      idx
+      _mmap = idx
     } finally {
+      initialized = true
       CoreUtils.swallow(raf.close())
     }
+  }
+
+  protected def mmap: MappedByteBuffer = {
+    if (!initialized) {
+      inLock(lock) {
+        if (!initialized) {
+          initializeMmapAndLength
+        }
+      }
+    }
+    _mmap
   }
 
   /**
    * The maximum number of entries this index can hold
    */
   @volatile
-  private[this] var _maxEntries = mmap.limit() / entrySize
+  private[this] var _maxEntries: Option[Int] = None
 
   /** The number of entries in this index */
   @volatile
-  protected var _entries = mmap.position() / entrySize
+  protected var _entries: Option[Int] = None
 
   /**
    * True iff there are no more slots available in this index
    */
-  def isFull: Boolean = _entries >= _maxEntries
+  def isFull: Boolean = entries >= maxEntries
 
-  def maxEntries: Int = _maxEntries
+  // This can trigger IO operation.
+  def maxEntries: Int = {
+    if (_maxEntries.isEmpty) {
+      inLock(lock) {
+        if (_maxEntries.isEmpty)
+          _maxEntries = Some(mmap.limit() / entrySize)
+      }
+    }
+    _maxEntries.get
+  }
 
-  def entries: Int = _entries
+  // This can trigger IO operation.
+  def entries: Int = {
+    if (_entries.isEmpty) {
+      inLock(lock) {
+        if (_entries.isEmpty)
+          _entries = Some(mmap.position() / entrySize)
+      }
+    }
+    _entries.get
+  }
 
-  def length: Long = _length
+  // This can trigger IO operation.
+  def length: Long = {
+    if (!initialized) {
+      inLock(lock) {
+        if (!initialized)
+          initializeMmapAndLength
+      }
+    }
+    _length.get
+  }
 
   /**
    * Reset the size of the memory map and the underneath file. This is used in two kinds of cases: (1) in
@@ -114,7 +171,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
   def resize(newSize: Int): Boolean = {
     inLock(lock) {
       val roundedNewSize = roundDownToExactMultiple(newSize, entrySize)
-      if (_length == roundedNewSize) {
+      if (length == roundedNewSize) {
         false
       } else {
         val raf = new RandomAccessFile(file, "rw")
@@ -125,9 +182,14 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
           forceUnmap(mmap)
         try {
           raf.setLength(roundedNewSize)
-          _length = roundedNewSize
-          mmap = raf.getChannel().map(FileChannel.MapMode.READ_WRITE, 0, roundedNewSize)
-          _maxEntries = mmap.limit() / entrySize
+          _length = Some(roundedNewSize)
+          _mmap = {
+            if (writable)
+              raf.getChannel.map(FileChannel.MapMode.READ_WRITE, 0, roundedNewSize)
+            else
+              raf.getChannel.map(FileChannel.MapMode.READ_ONLY, 0, roundedNewSize)
+          }
+          _maxEntries = Some(mmap.limit() / entrySize)
           mmap.position(position)
           true
         } finally {
@@ -166,10 +228,11 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
       // However, in some cases it can pause application threads(STW) for a long moment reading metadata from a physical disk.
       // To prevent this, we forcefully cleanup memory mapping within proper execution which never affects API responsiveness.
       // See https://issues.apache.org/jira/browse/KAFKA-4614 for the details.
-      CoreUtils.swallow(forceUnmap(mmap))
+      if (initialized)
+        CoreUtils.swallow(forceUnmap(mmap))
       // Accessing unmapped mmap crashes JVM by SEGV.
       // Accessing it after this method called sounds like a bug but for safety, assign null and do not allow later access.
-      mmap = null
+      _mmap = null
     }
     file.delete()
   }
@@ -180,14 +243,14 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
    */
   def trimToValidSize() {
     inLock(lock) {
-      resize(entrySize * _entries)
+      resize(entrySize * entries)
     }
   }
 
   /**
    * The number of bytes actually used by this index
    */
-  def sizeInBytes = entrySize * _entries
+  def sizeInBytes = entrySize * entries
 
   /** Close the index */
   def close() {
@@ -198,7 +261,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
     inLock(lock) {
       // File handler of the index field will be closed after the mmap is garbage collected
       CoreUtils.swallow(forceUnmap(mmap))
-      mmap = null
+      _mmap = null
     }
   }
 
@@ -284,7 +347,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
    */
   private def indexSlotRangeFor(idx: ByteBuffer, target: Long, searchEntity: IndexSearchEntity): (Int, Int) = {
     // check if the index is empty
-    if(_entries == 0)
+    if(entries == 0)
       return (-1, -1)
 
     // check if the target offset is smaller than the least offset
@@ -293,7 +356,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
 
     // binary search for the entry
     var lo = 0
-    var hi = _entries - 1
+    var hi = entries - 1
     while(lo < hi) {
       val mid = ceil(hi/2.0 + lo/2.0).toInt
       val found = parseEntry(idx, mid)
@@ -306,7 +369,7 @@ abstract class AbstractIndex[K, V](@volatile var file: File, val baseOffset: Lon
         return (mid, mid)
     }
 
-    (lo, if (lo == _entries - 1) -1 else lo + 1)
+    (lo, if (lo == entries - 1) -1 else lo + 1)
   }
 
   private def compareIndexEntry(indexEntry: IndexEntry, target: Long, searchEntity: IndexSearchEntity): Int = {

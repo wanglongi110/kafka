@@ -79,6 +79,7 @@ object Defaults {
   val HeapDumpTimeout = 30000
 
   /** ********* Log Configuration ***********/
+  val SanityCheckLogsOnStartupEnabled = false
   val NumPartitions = 1
   val LogDir = "/tmp/kafka-logs"
   val LogSegmentBytes = 1 * 1024 * 1024 * 1024
@@ -268,6 +269,7 @@ object KafkaConfig {
   /***************** rack configuration *************/
   val RackProp = "broker.rack"
   /** ********* Log Configuration ***********/
+  val SanityCheckLogsOnStartupEnabledProp = "sanity.check.logs.on.startup.enabled"
   val NumPartitionsProp = "num.partitions"
   val LogDirsProp = "log.dirs"
   val LogDirProp = "log.dir"
@@ -486,6 +488,8 @@ object KafkaConfig {
   /************* Rack Configuration **************/
   val RackDoc = "Rack of the broker. This will be used in rack aware replication assignment for fault tolerance. Examples: `RACK1`, `us-east-1d`"
   /** ********* Log Configuration ***********/
+  val SanityCheckLogsOnStartupEnabledDoc = "If true, sanity check all log segments on broker startup. Otherwise, sanity check only the active log segments on broker startup. " +
+    "Inactive segments will be sanity checked when broker becomes leader for those partitions"
   val NumPartitionsDoc = "The default number of log partitions per topic"
   val LogDirDoc = "The directory in which the log data is kept (supplemental for " + LogDirsProp + " property)"
   val LogDirsDoc = "The directories in which the log data is kept. If not set, the value in " + LogDirProp + " is used"
@@ -734,6 +738,7 @@ object KafkaConfig {
       .define(RackProp, STRING, null, MEDIUM, RackDoc)
 
       /** ********* Log Configuration ***********/
+      .define(SanityCheckLogsOnStartupEnabledProp, BOOLEAN, Defaults.SanityCheckLogsOnStartupEnabled, MEDIUM, SanityCheckLogsOnStartupEnabledDoc)
       .define(NumPartitionsProp, INT, Defaults.NumPartitions, atLeast(1), MEDIUM, NumPartitionsDoc)
       .define(LogDirProp, STRING, Defaults.LogDir, HIGH, LogDirDoc)
       .define(LogDirsProp, STRING, null, HIGH, LogDirsDoc)
@@ -958,6 +963,7 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
 
   /** ********* Log Configuration ***********/
   val autoCreateTopicsEnable = getBoolean(KafkaConfig.AutoCreateTopicsEnableProp)
+  val sanityCheckLogsOnStartupEnabled = getBoolean(KafkaConfig.SanityCheckLogsOnStartupEnabledProp)
   val numPartitions = getInt(KafkaConfig.NumPartitionsProp)
   val logDirs = CoreUtils.parseCsvList(Option(getString(KafkaConfig.LogDirsProp)).getOrElse(getString(KafkaConfig.LogDirProp)))
   val logSegmentBytes = getInt(KafkaConfig.LogSegmentBytesProp)

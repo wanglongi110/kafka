@@ -1004,6 +1004,8 @@ class ReplicaManager(val config: KafkaConfig,
 
         // First check partition's leader epoch
         val partitionState = new mutable.HashMap[Partition, LeaderAndIsrRequest.PartitionState]()
+        val newPartitions = leaderAndISRRequest.partitionStates.asScala.keys.filter(topicPartition => getPartition(topicPartition).isEmpty).toSet
+
         leaderAndISRRequest.partitionStates.asScala.foreach { case (topicPartition, stateInfo) =>
           val partition = getOrCreatePartition(topicPartition)
           val partitionLeaderEpoch = partition.getLeaderEpoch
@@ -1067,6 +1069,8 @@ class ReplicaManager(val config: KafkaConfig,
         }
         replicaFetcherManager.shutdownIdleFetcherThreads()
         onLeadershipChange(partitionsBecomeLeader, partitionsBecomeFollower)
+
+        logManager.scheduleLogsForSanityCheck(partitionsBecomeLeader.map(_.topicPartition))
         BecomeLeaderOrFollowerResult(responseMap, Errors.NONE)
       }
     }

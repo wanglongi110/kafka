@@ -1705,9 +1705,16 @@ class LogTest {
     val bogusIndex2 = Log.offsetIndexFile(logDir, 5)
     val bogusTimeIndex2 = Log.timeIndexFile(logDir, 5)
 
+    bogusIndex2.createNewFile()
+    bogusTimeIndex2.createNewFile()
+
     def createRecords = TestUtils.singletonRecords(value = "test".getBytes, timestamp = mockTime.milliseconds)
     val logConfig = createLogConfig(segmentBytes = createRecords.sizeInBytes * 5, segmentIndexBytes = 1000, indexIntervalBytes = 1)
     val log = createLog(logDir, logConfig)
+
+    // Create index files
+    log.logSegments.toSeq.head.index.file
+    log.logSegments.toSeq.head.timeIndex.file
 
     assertTrue("The first index file should have been replaced with a larger file", bogusIndex1.length > 0)
     assertTrue("The first time index file should have been replaced with a larger file", bogusTimeIndex1.length > 0)
