@@ -37,6 +37,10 @@ class CheckpointPersistentCacheFile[K, V](file: File,
     _entriesMap.get(key)
   }
 
+  override def read(): Map[K, V] = {
+    _entriesMap.toMap
+  }
+
   override def persist(): Unit = {
     _checkpointFile.write(_entriesMap.toSeq)
   }
