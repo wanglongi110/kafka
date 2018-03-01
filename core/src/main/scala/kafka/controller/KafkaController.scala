@@ -773,8 +773,17 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     info("Resuming reassignment of partitions: %s".format(partitionsToReassign.toString()))
   }
 
-  private def fetchTopicDeletionsInProgress(): (Set[String], Set[String]) = {
+  private def getTopicsToBeDeletedWithDeletionEnqueueTime(topicsToBeDeleted : Set[String]) : Set[TopicToBeDeleted] = {
+    topicsToBeDeleted.map(topic => {
+      val (_, stat) = zkUtils.readDataMaybeNull(ZkUtils.getDeleteTopicPath(topic))
+      TopicToBeDeleted(topic, stat.getCtime)
+    })
+  }
+
+  private def fetchTopicDeletionsInProgress(): (Set[TopicToBeDeleted], Set[String]) = {
     val topicsToBeDeleted = zkUtils.getChildrenParentMayNotExist(ZkUtils.DeleteTopicsPath).toSet
+    val topicsToBeDeletedWithDeletionEnqueueTime = getTopicsToBeDeletedWithDeletionEnqueueTime(topicsToBeDeleted)
+
     val topicsWithOfflineReplicas = controllerContext.partitionReplicaAssignment.filter { case (partition, replicas) =>
       replicas.exists(r => !controllerContext.isReplicaOnline(r, partition))
     }.keySet.map(_.topic)
@@ -782,7 +791,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     val topicsIneligibleForDeletion = topicsWithOfflineReplicas | topicsForWhichPartitionReassignmentIsInProgress
     info("List of topics to be deleted: %s".format(topicsToBeDeleted.mkString(",")))
     info("List of topics ineligible for deletion: %s".format(topicsIneligibleForDeletion.mkString(",")))
-    (topicsToBeDeleted, topicsIneligibleForDeletion)
+    (topicsToBeDeletedWithDeletionEnqueueTime, topicsIneligibleForDeletion)
   }
 
   private def maybeTriggerPartitionReassignment() {
@@ -1301,7 +1310,8 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
               topicDeletionManager.markTopicIneligibleForDeletion(Set(topic))
           }
           // add topic to deletion list
-          topicDeletionManager.enqueueTopicsForDeletion(topicsToBeDeleted)
+          val topicsToBeDeletedNotAlreadyEnqueued = topicsToBeDeleted -- topicDeletionManager.topicsToBeDeleted.map(_.topicName)
+          topicDeletionManager.enqueueTopicsForDeletion(getTopicsToBeDeletedWithDeletionEnqueueTime(topicsToBeDeletedNotAlreadyEnqueued))
         }
       } else {
         // If delete topic is disabled remove entries under zookeeper path : /admin/delete_topics

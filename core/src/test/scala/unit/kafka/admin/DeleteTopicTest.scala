@@ -26,7 +26,8 @@ import org.junit.{After, Test}
 import java.util.Properties
 
 import kafka.common.{TopicAlreadyMarkedForDeletionException, TopicAndPartition}
-import org.apache.kafka.common.TopicPartition
+import kafka.controller._
+import org.apache.kafka.common.{KafkaException, TopicPartition}
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException
 
 class DeleteTopicTest extends ZooKeeperTestHarness {
@@ -319,5 +320,85 @@ class DeleteTopicTest extends ZooKeeperTestHarness {
     // topic test should have a leader
     val leaderIdOpt = zkUtils.getLeaderForPartition(topic, 0)
     assertTrue("Leader should exist for topic test", leaderIdOpt.isDefined)
+  }
+
+
+  private def getController() : (KafkaServer, Int) = {
+    val controllerId = zkUtils.getController
+    val controller = servers.filter(s => s.config.brokerId == controllerId).head
+    (controller, controllerId)
+  }
+
+  private def ensureControllerExists() = {
+    TestUtils.waitUntilTrue(() => {
+      try {
+        getController()
+        true
+      } catch {
+        case _  => false
+      }
+    }, "Controller should eventually exist")
+  }
+
+  private def getAllReplicasFromAssignment(topic : String, assignment : Map[Int, Seq[Int]]) : Set[PartitionAndReplica] = {
+    assignment.flatMap { case (partition, replicas) =>
+      replicas.map {r => new PartitionAndReplica(topic, partition, r)}
+    }.toSet
+  }
+
+  @Test
+  def testDeletingMulitpleTopicsAndOnlyOneCanBeInProgress() {
+    // create the cluster
+    val brokerConfigs = TestUtils.createBrokerConfigs(3, zkConnect, enableControlledShutdown = false)
+    brokerConfigs.foreach(_.setProperty("delete.topic.enable", "true"))
+    servers = brokerConfigs.map(b => TestUtils.createServer(KafkaConfig.fromProps(b)))
+
+    // create one topic with replicas assigned to broker 0 and 1
+    val topic1Partition0 = new TopicPartition("topic1", 0)
+    val topic1Partition1 = new TopicPartition("topic1", 1)
+    val topic1 = topic1Partition0.topic
+    val partitionReplicaAssignment1 = Map(0 -> List(1, 2), 1 -> List(1, 2))
+
+    AdminUtils.createOrUpdateTopicPartitionAssignmentPathInZK(zkUtils, topic1, partitionReplicaAssignment1)
+
+    // create another topic with replicas assigned to broker 1 and 2
+    val topic2Partition0 = new TopicPartition("topic2", 0)
+    val topic2 = topic2Partition0.topic
+    val partitionReplicaAssignment2 = Map(0 -> List(0, 1))
+    AdminUtils.createOrUpdateTopicPartitionAssignmentPathInZK(zkUtils, topic2, partitionReplicaAssignment2)
+
+    // fail broker 0 so that topic1 becomes a topic ineligible for deletion
+    val broker2 = servers.filter(s => s.config.brokerId == 2).last
+    broker2.shutdown()
+    // delete topic1
+    AdminUtils.deleteTopic(zkUtils, topic1)
+    AdminUtils.deleteTopic(zkUtils, topic2)
+
+    /** verify that even though topic2 can potentially be deleted, kafka won't allow deletion of topic2
+      * to start if deletion of topic1 has not completed
+      */
+    ensureControllerExists()
+    val (controller, controllerId) = getController()
+
+
+    val allReplicasForTopic1 = getAllReplicasFromAssignment(topic1, partitionReplicaAssignment1)
+    TestUtils.waitUntilTrue(() => {
+      //allReplicasForTopic1 ==
+      val replicasInDeletionSuccessful = controller.kafkaController.replicaStateMachine.replicasInState(topic1, ReplicaDeletionSuccessful)
+      val offlineReplicas = controller.kafkaController.replicaStateMachine.replicasInState(topic1, OfflineReplica)
+      info(s"replicasInDeletionStarted ${replicasInDeletionSuccessful.mkString(",")} and offline replicas ${offlineReplicas.mkString(",")}")
+      allReplicasForTopic1 == (replicasInDeletionSuccessful union offlineReplicas)
+    }, s"Not all replicas for topic $topic1 are in states of either ReplicaDeletionSuccessful or OfflineReplica")
+
+    // verify that all replicas in topic2 are Online
+    val allReplicasForTopic2 = getAllReplicasFromAssignment(topic2, partitionReplicaAssignment2)
+    assertTrue(s"Deletion of topic $topic2 should not start before deletion of $topic1 has completed",
+      controller.kafkaController.replicaStateMachine.replicasInState(topic2, OnlineReplica) == allReplicasForTopic2
+    )
+
+    // bring up the failed broker, and verify the eventual topic deletion
+    broker2.startup()
+    TestUtils.verifyTopicDeletion(zkUtils, topic1, 2, servers)
+    TestUtils.verifyTopicDeletion(zkUtils, topic2, 1, servers)
   }
 }
