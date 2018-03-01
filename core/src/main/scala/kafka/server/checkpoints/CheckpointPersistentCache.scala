@@ -18,6 +18,11 @@ package kafka.server.checkpoints
 
 trait CheckpointPersistentCache[K, V] {
   def getCheckpoint(key: K): Option[V]
+
+  def read(): Map[K, V]
+
   def update(entries: Map[K, V]): Unit
+
   def persist(): Unit
 }
+
