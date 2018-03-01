@@ -1447,7 +1447,9 @@ class ReplicaManager(val config: KafkaConfig,
       val hwms = reps.map(r => r.topicPartition -> r.highWatermark.messageOffset).toMap
       try {
         val cache = highWatermarkCheckpoints(dir)
-        cache.update(hwms)
+        val previousHwms = cache.read()
+        val previousHwmsOfExistingReplicas = previousHwms.filterKeys(tp => logManager.getLog(tp).nonEmpty)
+        cache.update(previousHwmsOfExistingReplicas ++ hwms)
         cache.persist()
       } catch {
         case e: KafkaStorageException =>
