@@ -335,7 +335,7 @@ class DeleteTopicTest extends ZooKeeperTestHarness {
         getController()
         true
       } catch {
-        case _  => false
+        case _: Throwable  => false
       }
     }, "Controller should eventually exist")
   }
