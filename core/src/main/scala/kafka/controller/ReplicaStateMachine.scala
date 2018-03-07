@@ -174,7 +174,7 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
         case NonExistentReplica =>
           // remove this replica from the assigned replicas list for its partition
           val currentAssignedReplicas = controllerContext.partitionReplicaAssignment(topicAndPartition)
-          controllerContext.partitionReplicaAssignment.put(topicAndPartition, currentAssignedReplicas.filterNot(_ == replicaId))
+          controllerContext.updatePartitionReplicaAssignment(topicAndPartition, currentAssignedReplicas.filterNot(_ == replicaId))
           replicaState.remove(partitionAndReplica)
           stateChangeLogger.trace("Controller %d epoch %d changed state of replica %d for partition %s from %s to %s"
             .format(controllerId, controller.epoch, replicaId, topicAndPartition, currState, targetState))
@@ -184,7 +184,7 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
               // add this replica to the assigned replicas list for its partition
               val currentAssignedReplicas = controllerContext.partitionReplicaAssignment(topicAndPartition)
               if(!currentAssignedReplicas.contains(replicaId))
-                controllerContext.partitionReplicaAssignment.put(topicAndPartition, currentAssignedReplicas :+ replicaId)
+                controllerContext.updatePartitionReplicaAssignment(topicAndPartition, currentAssignedReplicas :+ replicaId)
               stateChangeLogger.trace("Controller %d epoch %d changed state of replica %d for partition %s from %s to %s"
                                         .format(controllerId, controller.epoch, replicaId, topicAndPartition, currState,
                                                 targetState))
@@ -254,16 +254,16 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
   }
 
   def replicasInState(topic: String, state: ReplicaState): Set[PartitionAndReplica] = {
-    replicaState.filter(r => r._1.topic.equals(topic) && r._2 == state).keySet
+    controllerContext.replicasForTopic(topic).filter(replica => replicaState(replica) == state)
   }
 
   def isAnyReplicaInState(topic: String, state: ReplicaState): Boolean = {
-    replicaState.exists(r => r._1.topic.equals(topic) && r._2 == state)
+    controllerContext.replicasForTopic(topic).exists(replica => replicaState(replica) == state)
   }
 
   def replicasInDeletionStates(topic: String): Set[PartitionAndReplica] = {
     val deletionStates = Set[ReplicaState](ReplicaDeletionStarted, ReplicaDeletionSuccessful, ReplicaDeletionIneligible)
-    replicaState.filter(r => r._1.topic.equals(topic) && deletionStates.contains(r._2)).keySet
+    controllerContext.replicasForTopic(topic).filter(replica => deletionStates.contains(replicaState(replica)))
   }
 
   private def assertValidTransition(partitionAndReplica: PartitionAndReplica, targetState: ReplicaState): Unit = {
@@ -278,7 +278,8 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
    * in zookeeper
    */
   private def initializeReplicaState() {
-    for((topicPartition, assignedReplicas) <- controllerContext.partitionReplicaAssignment) {
+    controllerContext.allPartitions.foreach { topicPartition =>
+      val assignedReplicas = controllerContext.partitionReplicaAssignment(topicPartition)
       val topic = topicPartition.topic
       val partition = topicPartition.partition
       assignedReplicas.foreach { replicaId =>
@@ -293,11 +294,6 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
       }
     }
   }
-
-  def partitionsAssignedToBroker(topics: Seq[String], brokerId: Int):Seq[TopicAndPartition] = {
-    controllerContext.partitionReplicaAssignment.filter(_._2.contains(brokerId)).keySet.toSeq
-  }
-
 }
 
 sealed trait ReplicaState {

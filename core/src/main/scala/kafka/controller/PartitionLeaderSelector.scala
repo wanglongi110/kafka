@@ -52,45 +52,45 @@ class OfflinePartitionLeaderSelector(controllerContext: ControllerContext, confi
   logIdent = "[OfflinePartitionLeaderSelector]: "
 
   def selectLeader(topicAndPartition: TopicAndPartition, currentLeaderAndIsr: LeaderAndIsr): (LeaderAndIsr, Seq[Int]) = {
-    controllerContext.partitionReplicaAssignment.get(topicAndPartition) match {
-      case Some(assignedReplicas) =>
-        val liveAssignedReplicas = assignedReplicas.filter(r => controllerContext.isReplicaOnline(r, topicAndPartition))
-        val liveBrokersInIsr = currentLeaderAndIsr.isr.filter(r => controllerContext.isReplicaOnline(r, topicAndPartition))
-        val newLeaderAndIsr =
-          if (liveBrokersInIsr.isEmpty) {
-            // Prior to electing an unclean (i.e. non-ISR) leader, ensure that doing so is not disallowed by the configuration
-            // for unclean leader election.
-            if (!LogConfig.fromProps(config.originals, AdminUtils.fetchEntityConfig(controllerContext.zkUtils,
-              ConfigType.Topic, topicAndPartition.topic)).uncleanLeaderElectionEnable) {
-              throw new NoReplicaOnlineException(
-                s"No replica in ISR for partition $topicAndPartition is alive. Live brokers are: [${controllerContext.liveBrokerIds}], " +
-                  s"ISR brokers are: [${currentLeaderAndIsr.isr.mkString(",")}]"
-              )
-            }
-            debug(s"No broker in ISR is alive for $topicAndPartition. Pick the leader from the alive assigned " +
-              s"replicas: ${liveAssignedReplicas.mkString(",")}")
-
-            if (liveAssignedReplicas.isEmpty) {
-              throw new NoReplicaOnlineException(s"No replica for partition $topicAndPartition is alive. Live " +
-                s"brokers are: [${controllerContext.liveBrokerIds}]. Assigned replicas are: [$assignedReplicas].")
-            } else {
-              controllerContext.stats.uncleanLeaderElectionRate.mark()
-              val newLeader = liveAssignedReplicas.head
-              warn(s"No broker in ISR is alive for $topicAndPartition. Elect leader $newLeader from live " +
-                s"brokers ${liveAssignedReplicas.mkString(",")}. There's potential data loss.")
-              currentLeaderAndIsr.newLeaderAndIsr(newLeader, List(newLeader))
-            }
-          } else {
-            val liveReplicasInIsr = liveAssignedReplicas.filter(r => liveBrokersInIsr.contains(r))
-            val newLeader = liveReplicasInIsr.head
-            debug(s"Some broker in ISR is alive for $topicAndPartition. Select $newLeader from ISR " +
-              s"${liveBrokersInIsr.mkString(",")} to be the leader.")
-            currentLeaderAndIsr.newLeaderAndIsr(newLeader, liveBrokersInIsr)
+    val assignedReplicas = controllerContext.partitionReplicaAssignment(topicAndPartition)
+    if (assignedReplicas.nonEmpty) {
+      val liveAssignedReplicas = assignedReplicas.filter(r => controllerContext.isReplicaOnline(r, topicAndPartition))
+      val liveBrokersInIsr = currentLeaderAndIsr.isr.filter(r => controllerContext.isReplicaOnline(r, topicAndPartition))
+      val newLeaderAndIsr =
+        if (liveBrokersInIsr.isEmpty) {
+          // Prior to electing an unclean (i.e. non-ISR) leader, ensure that doing so is not disallowed by the configuration
+          // for unclean leader election.
+          if (!LogConfig.fromProps(config.originals, AdminUtils.fetchEntityConfig(controllerContext.zkUtils,
+            ConfigType.Topic, topicAndPartition.topic)).uncleanLeaderElectionEnable) {
+            throw new NoReplicaOnlineException(
+              s"No replica in ISR for partition $topicAndPartition is alive. Live brokers are: [${controllerContext.liveBrokerIds}], " +
+                s"ISR brokers are: [${currentLeaderAndIsr.isr.mkString(",")}]"
+            )
           }
-        info(s"Selected new leader and ISR $newLeaderAndIsr for offline partition $topicAndPartition")
-        (newLeaderAndIsr, liveAssignedReplicas)
-      case None =>
-        throw new NoReplicaOnlineException(s"Partition $topicAndPartition doesn't have replicas assigned to it")
+          debug(s"No broker in ISR is alive for $topicAndPartition. Pick the leader from the alive assigned " +
+            s"replicas: ${liveAssignedReplicas.mkString(",")}")
+
+          if (liveAssignedReplicas.isEmpty) {
+            throw new NoReplicaOnlineException(s"No replica for partition $topicAndPartition is alive. Live " +
+              s"brokers are: [${controllerContext.liveBrokerIds}]. Assigned replicas are: [$assignedReplicas].")
+          } else {
+            controllerContext.stats.uncleanLeaderElectionRate.mark()
+            val newLeader = liveAssignedReplicas.head
+            warn(s"No broker in ISR is alive for $topicAndPartition. Elect leader $newLeader from live " +
+              s"brokers ${liveAssignedReplicas.mkString(",")}. There's potential data loss.")
+            currentLeaderAndIsr.newLeaderAndIsr(newLeader, List(newLeader))
+          }
+        } else {
+          val liveReplicasInIsr = liveAssignedReplicas.filter(r => liveBrokersInIsr.contains(r))
+          val newLeader = liveReplicasInIsr.head
+          debug(s"Some broker in ISR is alive for $topicAndPartition. Select $newLeader from ISR " +
+            s"${liveBrokersInIsr.mkString(",")} to be the leader.")
+          currentLeaderAndIsr.newLeaderAndIsr(newLeader, liveBrokersInIsr)
+        }
+      info(s"Selected new leader and ISR $newLeaderAndIsr for offline partition $topicAndPartition")
+      (newLeaderAndIsr, liveAssignedReplicas)
+    } else {
+      throw new NoReplicaOnlineException(s"Partition $topicAndPartition doesn't have replicas assigned to it")
     }
   }
 }

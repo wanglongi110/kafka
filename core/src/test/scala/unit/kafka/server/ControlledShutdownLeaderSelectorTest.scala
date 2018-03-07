@@ -42,7 +42,7 @@ class ControlledShutdownLeaderSelectorTest {
     val controllerContext = new ControllerContext(zkUtils)
     controllerContext.liveBrokers = assignment.map(Broker(_, Seq.empty, None)).toSet
     controllerContext.shuttingDownBrokerIds = mutable.Set(2, 3)
-    controllerContext.partitionReplicaAssignment = mutable.Map(topicPartition -> assignment)
+    controllerContext.updatePartitionReplicaAssignment(topicPartition, assignment)
 
     val leaderSelector = new ControlledShutdownLeaderSelector(controllerContext)
     val firstLeaderAndIsr = LeaderAndIsr(firstLeader, firstIsr)
