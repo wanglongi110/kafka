@@ -322,8 +322,10 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     registerBrokerChangeListener()
     registerLogDirEventNotificationListener()
 
-    initializeControllerContext()
-    val (topicsToBeDeleted, topicsIneligibleForDeletion) = fetchTopicDeletionsInProgress()
+    val topicsToBeDeleted = fetchTopicDeletionsInProgress()
+    initializeControllerContext(topicsToBeDeleted.map(_.topicName))
+    val topicsIneligibleForDeletion = fetchTopicsIneligibleForDeletion()
+
     topicDeletionManager.init(topicsToBeDeleted, topicsIneligibleForDeletion)
 
     // We need to send UpdateMetadataRequest after the controller context is initialized and before the state machines
@@ -739,7 +741,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     zkUtils.subscribeDataChanges(ZkUtils.ControllerPath, new ControllerChangeListener(this, eventManager))
   }
 
-  private def initializeControllerContext() {
+  private def initializeControllerContext(initialTopicsToBeDeleted: Set[String]) {
     // update controller cache with delete topic information
     controllerContext.liveBrokers = zkUtils.getAllBrokersInCluster().toSet
     controllerContext.allTopics = zkUtils.getAllTopics().toSet
@@ -752,7 +754,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     updateLeaderAndIsrCache()
     // start the channel manager
     startChannelManager()
-    initializePartitionReassignment()
+    initializePartitionReassignment(initialTopicsToBeDeleted)
     info("Currently active brokers in the cluster: %s".format(controllerContext.liveBrokerIds))
     info("Currently shutting brokers in the cluster: %s".format(controllerContext.shuttingDownBrokerIds))
     info("Current list of topics in the cluster: %s".format(controllerContext.allTopics))
@@ -793,7 +795,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     controllerContext.liveBrokers = Set.empty
   }
 
-  private def initializePartitionReassignment() {
+  private def initializePartitionReassignment(initialTopicsToBeDeleted: Set[String]) {
     // read the partitions being reassigned from zookeeper path /admin/reassign_partitions
     val partitionsBeingReassigned = zkUtils.getPartitionsBeingReassigned()
     // check if they are already completed or topic was deleted
@@ -802,14 +804,22 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
       val topicDeleted = replicas.isEmpty
       val successful = if (!topicDeleted) replicas == partition._2.newReplicas else false
       topicDeleted || successful
-    }.keys
+    }.keys.toSet
+
+    val partitionsBeingDeleted = partitionsBeingReassigned.filter { partition =>
+      initialTopicsToBeDeleted.contains(partition._1.topic)
+    }.keys.toSet
+
     reassignedPartitions.foreach(p => removePartitionFromReassignedPartitions(p))
+    partitionsBeingDeleted.foreach(p => removePartitionFromReassignedPartitions(p))
     val partitionsToReassign = mutable.Map[TopicAndPartition, ReassignedPartitionsContext]()
     partitionsToReassign ++= partitionsBeingReassigned
     partitionsToReassign --= reassignedPartitions
+    partitionsToReassign --= partitionsBeingDeleted
     controllerContext.partitionsBeingReassigned ++= partitionsToReassign
     info("Partitions being reassigned: %s".format(partitionsBeingReassigned.toString()))
     info("Partitions already reassigned: %s".format(reassignedPartitions.toString()))
+    info("Partition assignments canceled due to topic deletion: %s".format(partitionsBeingDeleted.toString()))
     info("Resuming reassignment of partitions: %s".format(partitionsToReassign.toString()))
   }
 
@@ -820,20 +830,23 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     })
   }
 
-  private def fetchTopicDeletionsInProgress(): (Set[TopicToBeDeleted], Set[String]) = {
+  private def fetchTopicDeletionsInProgress(): Set[TopicToBeDeleted] = {
     val topicsToBeDeleted = zkUtils.getChildrenParentMayNotExist(ZkUtils.DeleteTopicsPath).toSet
     val topicsToBeDeletedWithDeletionEnqueueTime = getTopicsToBeDeletedWithDeletionEnqueueTime(topicsToBeDeleted)
 
+    info("List of topics to be deleted: %s".format(topicsToBeDeleted.mkString(",")))
+    topicsToBeDeletedWithDeletionEnqueueTime
+  }
+
+  private def fetchTopicsIneligibleForDeletion(): Set[String] = {
     val topicsWithOfflineReplicas = controllerContext.allTopics.filter { topic => {
       val replicasForTopic = controllerContext.replicasForTopic(topic)
       replicasForTopic.exists(r => !controllerContext.isReplicaOnline(r.replica, new TopicAndPartition(topic, r.partition)))
     }}
-
     val topicsForWhichPartitionReassignmentIsInProgress = controllerContext.partitionsBeingReassigned.keySet.map(_.topic)
     val topicsIneligibleForDeletion = topicsWithOfflineReplicas | topicsForWhichPartitionReassignmentIsInProgress
-    info("List of topics to be deleted: %s".format(topicsToBeDeleted.mkString(",")))
     info("List of topics ineligible for deletion: %s".format(topicsIneligibleForDeletion.mkString(",")))
-    (topicsToBeDeletedWithDeletionEnqueueTime, topicsIneligibleForDeletion)
+    topicsIneligibleForDeletion
   }
 
   private def maybeTriggerPartitionReassignment() {
