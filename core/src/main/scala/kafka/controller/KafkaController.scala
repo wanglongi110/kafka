@@ -1281,21 +1281,38 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
       val curBrokerIds = curBrokers.map(_.id)
       val brokerIdsOnEventReceived = brokersOnEventReceived.map(_.toInt).toSet
       val liveOrShuttingDownBrokerIds = controllerContext.liveOrShuttingDownBrokerIds
-      // Also call onBrokerStartup for brokers in (curBrokerIds -- brokerIdsOnEventReceived) to take care of the
-      // scenario that the broker has started after the event is received but before the event is processed
-      val newBrokerIds = (curBrokerIds -- liveOrShuttingDownBrokerIds) ++ (curBrokerIds -- brokerIdsOnEventReceived)
+      val shuttingdowBrokerIds = controllerContext.shuttingDownBrokerIds
+      // The dead brokers are the brokers that exist before this event but no longer exist now.
       val deadBrokerIds = liveOrShuttingDownBrokerIds -- curBrokerIds
+      // The new brokers are the brokers that exist now but not before this event.
+      val newBrokerIds = curBrokerIds -- liveOrShuttingDownBrokerIds
+      // If the broker existed before the event fires and also exists now, but did not exist when the event fires, the
+      // broker was bounced. In this case, we need to first clean up their state then treat them as newly added
+      // brokers.
+      val bouncedBrokerIds = (curBrokerIds & liveOrShuttingDownBrokerIds) -- brokerIdsOnEventReceived
       val newBrokers = curBrokers.filter(broker => newBrokerIds(broker.id))
+      val bouncedBrokers = curBrokers.filter(broker => newBrokerIds(broker.id))
       controllerContext.liveBrokers = curBrokers
       val newBrokerIdsSorted = newBrokerIds.toSeq.sorted
       val deadBrokerIdsSorted = deadBrokerIds.toSeq.sorted
+      val bouncedBrokerIdsSorted = bouncedBrokerIds.toSeq.sorted
       val liveBrokerIdsSorted = curBrokerIds.toSeq.sorted
-      info("Newly added brokers: %s, deleted brokers: %s, all live brokers: %s"
-        .format(newBrokerIdsSorted.mkString(","), deadBrokerIdsSorted.mkString(","), liveBrokerIdsSorted.mkString(",")))
-      newBrokers.foreach(controllerContext.controllerChannelManager.addBroker)
+      info("Newly added brokers: %s, deleted brokers: %s, bounced Brokers: %s, all live brokers: %s"
+        .format(newBrokerIdsSorted.mkString(","), deadBrokerIdsSorted.mkString(","), bouncedBrokerIdsSorted.mkString(","),
+          liveBrokerIdsSorted.mkString(",")))
       deadBrokerIds.foreach(controllerContext.controllerChannelManager.removeBroker)
+      bouncedBrokerIds.foreach(controllerContext.controllerChannelManager.removeBroker)
+      bouncedBrokers.foreach(controllerContext.controllerChannelManager.addBroker)
+      newBrokers.foreach(controllerContext.controllerChannelManager.addBroker)
+      // Process the new brokers
       if (newBrokerIds.nonEmpty)
         onBrokerStartup(newBrokerIdsSorted)
+      // handle the bounced brokers
+      if (bouncedBrokerIds.nonEmpty) {
+        onBrokerFailure(bouncedBrokerIdsSorted.filter(shuttingdowBrokerIds.contains))
+        onBrokerStartup(bouncedBrokerIdsSorted)
+      }
+      // finally handle the dead brokers.
       if (deadBrokerIds.nonEmpty)
         onBrokerFailure(deadBrokerIdsSorted)
     }
