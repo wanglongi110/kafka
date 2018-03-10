@@ -27,7 +27,7 @@ import kafka.server.ReplicaFetcherThread._
 import kafka.server.epoch.LeaderEpochCache
 import org.apache.kafka.common.requests.EpochEndOffset._
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.errors.KafkaStorageException
+import org.apache.kafka.common.errors.{KafkaStorageException, OffsetOutOfRangeException}
 import org.apache.kafka.common.internals.FatalExitError
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.protocol.Errors
@@ -105,7 +105,11 @@ class ReplicaFetcherThread(name: String,
     // its segment base offset the physical position,
     // these values will be computed upon making the leader
     replica.highWatermark = new LogOffsetMetadata(followerHighWatermark)
-    replica.maybeIncrementLogStartOffset(leaderLogStartOffset)
+    try {
+      replica.maybeIncrementLogStartOffset(leaderLogStartOffset)
+    } catch {
+      case e: OffsetOutOfRangeException => // Skip to due a bug that can cause hw to be -1. See LIKAFKA-15455.
+    }
     if (logger.isTraceEnabled)
       trace(s"Follower ${replica.brokerId} set replica high watermark for partition $topicPartition to $followerHighWatermark")
     if (quota.isThrottled(topicPartition))
