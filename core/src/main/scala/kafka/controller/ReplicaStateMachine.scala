@@ -221,11 +221,19 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
                     stateChangeLogger.trace("Controller %d epoch %d changed state of replica %d for partition %s from %s to %s"
                       .format(controllerId, controller.epoch, replicaId, topicAndPartition, currState, targetState))
                     false
-                  case None =>
+                  case None => {
+                    stateChangeLogger.warn(("Controller %d epoch %d failed to change state of replica %d for partition %s from %s to %s" +
+                      " since it couldn't get an updated leader isr and controller epoch after attempt to remove the replica from ISR")
+                      .format(controllerId, controller.epoch, replicaId, topicAndPartition, currState, targetState))
                     true
+                  }
                 }
-              case None =>
+              case None => {
+                stateChangeLogger.warn(("Controller %d epoch %d failed to change state of replica %d for partition %s from %s to %s" +
+                  " since it does not have the leadership info")
+                  .format(controllerId, controller.epoch, replicaId, topicAndPartition, currState, targetState))
                 true
+              }
             }
           if (leaderAndIsrIsEmpty && !controller.topicDeletionManager.isPartitionToBeDeleted(topicAndPartition))
             throw new StateChangeFailedException(
