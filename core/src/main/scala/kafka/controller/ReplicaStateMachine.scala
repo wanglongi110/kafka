@@ -217,9 +217,6 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
                       brokerRequestBatch.addLeaderAndIsrRequestForBrokers(currentAssignedReplicas.filterNot(_ == replicaId),
                         topic, partition, updatedLeaderIsrAndControllerEpoch, replicaAssignment)
                     }
-                    replicaState.put(partitionAndReplica, OfflineReplica)
-                    stateChangeLogger.trace("Controller %d epoch %d changed state of replica %d for partition %s from %s to %s"
-                      .format(controllerId, controller.epoch, replicaId, topicAndPartition, currState, targetState))
                     false
                   case None => {
                     stateChangeLogger.warn(("Controller %d epoch %d failed to change state of replica %d for partition %s from %s to %s" +
@@ -239,6 +236,10 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
             throw new StateChangeFailedException(
               "Failed to change state of replica %d for partition %s since the leader and isr path in zookeeper is empty"
               .format(replicaId, topicAndPartition))
+
+          replicaState.put(partitionAndReplica, OfflineReplica)
+          stateChangeLogger.trace("Controller %d epoch %d changed state of replica %d for partition %s from %s to %s"
+            .format(controllerId, controller.epoch, replicaId, topicAndPartition, currState, targetState))
       }
     }
     catch {

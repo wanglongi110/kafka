@@ -18,7 +18,7 @@ package kafka.admin
 
 import kafka.log.Log
 import kafka.zk.ZooKeeperTestHarness
-import kafka.utils.TestUtils
+import kafka.utils.{TestUtils, ZkUtils}
 import kafka.utils.ZkUtils._
 import kafka.server.{KafkaConfig, KafkaServer}
 import org.junit.Assert._
@@ -400,5 +400,40 @@ class DeleteTopicTest extends ZooKeeperTestHarness {
     broker2.startup()
     TestUtils.verifyTopicDeletion(zkUtils, topic1, 2, servers)
     TestUtils.verifyTopicDeletion(zkUtils, topic2, 1, servers)
+  }
+
+  @Test
+  def testDeletingPartitiallyDeletedTopic() {
+    /**
+      * a previous controller could have deleted some partitions of a topic from ZK, but not all partitions, and then died
+      * in that case, the new controller should be able to handle the partially deleted topic, and finish the deletion
+      */
+
+    /**
+      * set up a partially deleted topic topic1 where the data of /brokers/topics/topic1 has 2 partitions and assigned replicas
+      * but there is only one partition under /brokers/topics/topic1/partitions/
+      */
+
+    val brokerConfigs = TestUtils.createBrokerConfigs(3, zkConnect, enableControlledShutdown = false)
+    brokerConfigs.foreach(_.setProperty("delete.topic.enable", "true"))
+    servers = brokerConfigs.map(b => TestUtils.createServer(KafkaConfig.fromProps(b)))
+
+    val topicPartitions =  Seq(new TopicPartition("topic1", 0), new TopicPartition("topic1", 1))
+    val topic1 = "topic1"
+    val partitionReplicaAssignment1 = Map(0 -> List(0, 1, 2), 1 -> List(0, 1, 2))
+
+    AdminUtils.createOrUpdateTopicPartitionAssignmentPathInZK(zkUtils, topic1, partitionReplicaAssignment1)
+    TestUtils.waitUntilTrue(() => servers.forall { server =>
+      topicPartitions.forall {
+        topicPartition => server.getLogManager().getLog(topicPartition).isDefined
+      }
+    }, "Not all replicas for topic %s are created.".format(topic1))
+
+    zkUtils.deletePathRecursive(ZkUtils.getTopicPartitionPath(topic1, 1))
+
+    // delete the topic
+    AdminUtils.deleteTopic(zkUtils, topic1)
+
+    TestUtils.verifyTopicDeletion(zkUtils, topic1, 2, servers)
   }
 }
