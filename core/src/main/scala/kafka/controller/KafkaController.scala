@@ -451,7 +451,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     if(replicasForTopicsToBeDeleted.nonEmpty) {
       info(("Some replicas %s for topics scheduled for deletion %s are on the newly restarted brokers %s. " +
         "Signaling restart of topic deletion for these topics").format(replicasForTopicsToBeDeleted.mkString(","),
-        topicDeletionManager.topicsToBeDeleted.mkString(","), newBrokers.mkString(",")))
+        topicDeletionManager.topicsToBeDeleted.keySet.mkString(","), newBrokers.mkString(",")))
       topicDeletionManager.resumeDeletionForTopics(replicasForTopicsToBeDeleted.map(_.topic))
     }
   }
@@ -1388,7 +1388,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
               topicDeletionManager.markTopicIneligibleForDeletion(Set(topic))
           }
           // add topic to deletion list
-          val topicsToBeDeletedNotAlreadyEnqueued = topicsToBeDeleted -- topicDeletionManager.topicsToBeDeleted.map(_.topicName)
+          val topicsToBeDeletedNotAlreadyEnqueued = topicsToBeDeleted -- topicDeletionManager.topicsToBeDeleted.keySet
           topicDeletionManager.enqueueTopicsForDeletion(getTopicsToBeDeletedWithDeletionEnqueueTime(topicsToBeDeletedNotAlreadyEnqueued))
         }
       } else {
