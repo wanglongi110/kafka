@@ -74,7 +74,8 @@ class LogManager(logDirs: Array[File],
 
   private val logCreationOrDeletionLock = new Object
   private val logs = new Pool[TopicPartition, Log]()
-  private val logsToBeDeleted = new LinkedBlockingQueue[Log]()
+  // Each element in the queue contains the log object to be deleted and the time it is scheduled for deletion.
+  private val logsToBeDeleted = new LinkedBlockingQueue[(Log, Long)]()
 
   private val _liveLogDirs: ConcurrentLinkedQueue[File] = createAndValidateLogDirs(logDirs, initialOfflineDirs)
 
@@ -132,6 +133,10 @@ class LogManager(logDirs: Array[File],
       },
       Map("logDirectory" -> dir.getAbsolutePath)
     )
+  }
+
+  private def addLogToBeDeleted(log: Log): Unit = {
+    this.logsToBeDeleted.add((log, time.milliseconds()))
   }
 
   /**
@@ -248,7 +253,7 @@ class LogManager(logDirs: Array[File],
       current.sanityCheckSegments()
 
     if (logDir.getName.endsWith(Log.DeleteDirSuffix)) {
-      this.logsToBeDeleted.add(current)
+      addLogToBeDeleted(current)
     } else {
       val previous = this.logs.put(topicPartition, current)
       if (previous != null) {
@@ -713,9 +718,12 @@ class LogManager(logDirs: Array[File],
   private def deleteLogs(): Unit = {
     try {
       while (!logsToBeDeleted.isEmpty) {
-        val removedLog = logsToBeDeleted.take()
+        val (removedLog, scheduleTimeMs) = logsToBeDeleted.take()
         if (removedLog != null) {
           try {
+            val waitingTimeMs = scheduleTimeMs + defaultConfig.fileDeleteDelayMs - time.milliseconds()
+            if (waitingTimeMs > 0)
+              Thread.sleep(waitingTimeMs)
             removedLog.delete()
             info(s"Deleted log for partition ${removedLog.topicPartition} in ${removedLog.dir.getAbsolutePath}.")
           } catch {
@@ -757,7 +765,7 @@ class LogManager(logDirs: Array[File],
           removedLog.dir = renamedDir
           // change the file pointers for log and index file
           removedLog.logSegments.foreach(_.updateDir(renamedDir))
-          logsToBeDeleted.add(removedLog)
+          addLogToBeDeleted(removedLog)
           removedLog.removeLogMetrics()
           info(s"Log for partition ${removedLog.topicPartition} is renamed to ${removedLog.dir.getAbsolutePath} and is scheduled for deletion")
         } else {
