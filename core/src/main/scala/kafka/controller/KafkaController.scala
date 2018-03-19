@@ -1291,7 +1291,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
       // brokers.
       val bouncedBrokerIds = (curBrokerIds & liveOrShuttingDownBrokerIds) -- brokerIdsOnEventReceived
       val newBrokers = curBrokers.filter(broker => newBrokerIds(broker.id))
-      val bouncedBrokers = curBrokers.filter(broker => newBrokerIds(broker.id))
+      val bouncedBrokers = curBrokers.filter(broker => bouncedBrokerIds(broker.id))
       controllerContext.liveBrokers = curBrokers
       val newBrokerIdsSorted = newBrokerIds.toSeq.sorted
       val deadBrokerIdsSorted = deadBrokerIds.toSeq.sorted
