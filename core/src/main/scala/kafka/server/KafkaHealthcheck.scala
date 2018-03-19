@@ -28,6 +28,7 @@ import kafka.metrics.KafkaMetricsGroup
 import kafka.network.RequestChannel
 import kafka.utils._
 import org.I0Itec.zkclient.IZkStateListener
+import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.utils.{PoisonPill, Time}
 import org.apache.kafka.common.protocol.SecurityProtocol
 import org.apache.zookeeper.Watcher.Event.KeeperState
@@ -83,7 +84,7 @@ class KafkaHealthcheck(brokerId: Int,
    */
   def register() {
     val jmxPort = System.getProperty("com.sun.management.jmxremote.port", "-1").toInt
-    val updatedEndpoints = advertisedEndpoints.map(endpoint =>
+    var updatedEndpoints = advertisedEndpoints.map(endpoint =>
       if (endpoint.host == null || endpoint.host.trim.isEmpty)
         endpoint.copy(host = InetAddress.getLocalHost.getCanonicalHostName)
       else
@@ -95,6 +96,17 @@ class KafkaHealthcheck(brokerId: Int,
     // or we register an empty endpoint, which means that older clients will not be able to connect
     val plaintextEndpoint = updatedEndpoints.find(_.securityProtocol == SecurityProtocol.PLAINTEXT).getOrElse(
       new EndPoint(null, -1, null, null))
+
+    // HOTFIX for LIKAFKA-15620. We add a dummy plaintext endpoint for KAC cluster.
+    // This HOTFIX can be removed after we deprecate brooklin-li-common_7.0.10 and earlier versions.
+    if (plaintextEndpoint.host == null) {
+      updatedEndpoints.find(endpoint => endpoint.listenerName.value().equals("SSL")) match {
+        case Some(sslEndPoint) =>
+          updatedEndpoints = updatedEndpoints ++ List(new EndPoint(sslEndPoint.host, 0, new ListenerName("PLAINTEXT"), SecurityProtocol.PLAINTEXT))
+        case None =>
+      }
+    }
+
     zkUtils.registerBrokerInZk(brokerId, plaintextEndpoint.host, plaintextEndpoint.port, updatedEndpoints, jmxPort, rack,
       interBrokerProtocolVersion)
   }
