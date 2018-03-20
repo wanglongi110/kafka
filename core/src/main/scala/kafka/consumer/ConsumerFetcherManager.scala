@@ -109,8 +109,8 @@ class ConsumerFetcherManager(private val consumerIdString: String,
             list
           }
           // if there are any errors, we swallow it and retry after the leader finder backoff
-          val version = new java.lang.Short("2")
-          val clientResponse = networkClient.sendRequest(ApiKeys.METADATA, new JMetadataRequest.Builder(topicList, version))
+          // Setting allowAutoTopicCreation to false in MetadataRequest to avoid re-creating a deleted topic on the broker
+          val clientResponse = networkClient.sendRequest(ApiKeys.METADATA, new JMetadataRequest.Builder(topicList, false))
           val metadataResponse = clientResponse.responseBody.asInstanceOf[JMetadataResponse]
           val cluster = metadataResponse.cluster()
 
