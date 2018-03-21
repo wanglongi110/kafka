@@ -1250,6 +1250,23 @@ class Log(@volatile var dir: File,
     }
   }
 
+  def prepareForDeletion(): Unit = {
+    val dirName = logDeleteDirName(name)
+    val renamedDir = new File(dir.getParent, dirName)
+    lock synchronized {
+      close()
+      if (dir.renameTo(renamedDir)) {
+        dir = renamedDir
+        // change the file pointers for log and index file
+        logSegments.foreach(_.updateDir(renamedDir))
+        removeLogMetrics()
+        info(s"Log for partition ${topicPartition} is renamed to ${dir.getAbsolutePath} and is scheduled for deletion")
+      } else {
+        throw new IOException("Failed to rename log directory from " + dir.getAbsolutePath + " to " + renamedDir.getAbsolutePath)
+      }
+    }
+  }
+
   /**
    * Find segments starting from the oldest until the user-supplied predicate is false or the segment
    * containing the current high watermark is reached. We do not delete segments with offsets at or beyond

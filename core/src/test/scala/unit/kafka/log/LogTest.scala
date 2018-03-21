@@ -2215,6 +2215,32 @@ class LogTest {
   }
 
   @Test
+  def shouldNotChangeParentDirPrepareForDeletion(): Unit = {
+    def createRecords = TestUtils.singletonRecords("test".getBytes, timestamp = 10)
+    val logConfig = createLogConfig(segmentBytes = createRecords.sizeInBytes * 5, retentionMs = 10000)
+    val log = createLog(logDir, logConfig)
+
+    // append some messages to create some segments
+    for (_ <- 0 until 15)
+      log.appendAsLeader(createRecords, leaderEpoch = 0)
+
+    log.onHighWatermarkIncremented(log.logEndOffset)
+    val beforeDir = log.dir
+    val beforeNumSegments = log.logSegments.size
+    log.prepareForDeletion()
+    val afterDir = log.dir
+    val afterNumSegments = log.logSegments.size
+    // The number of segments should remain unchained
+    assertEquals(beforeNumSegments, afterNumSegments)
+    // The parent directory of the log directory should remain unchanged
+    assertEquals(beforeDir.getParent, afterDir.getParent)
+    // The parent directory of all the segments should be the renamed directory
+    for(segment <- log.logSegments) {
+      assertEquals(afterDir, segment.log.file().getParentFile)
+    }
+  }
+
+  @Test
   def shouldDeleteTimeBasedSegmentsReadyToBeDeleted() {
     def createRecords = TestUtils.singletonRecords("test".getBytes, timestamp = 10)
     val logConfig = createLogConfig(segmentBytes = createRecords.sizeInBytes * 5, retentionMs = 10000)

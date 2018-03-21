@@ -339,4 +339,13 @@ class LogManagerTest {
         fileInIndex.get.getAbsolutePath)
     }
   }
+
+  @Test
+  def testLogScheduledForDeletion(): Unit = {
+    logManager.getOrCreateLog(new TopicPartition(name, 0), logConfig)
+    logManager.asyncDelete(new TopicPartition(name, 0))
+    assertFalse(logManager.pendingDeleteLogs().isEmpty)
+    logManager.deleteLogs
+    assertTrue(logManager.pendingDeleteLogs().isEmpty)
+  }
 }

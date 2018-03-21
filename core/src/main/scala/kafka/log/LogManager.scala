@@ -19,6 +19,7 @@ package kafka.log
 
 import java.io._
 import java.nio.file.Files
+import java.util
 import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -137,6 +138,10 @@ class LogManager(logDirs: Array[File],
 
   private def addLogToBeDeleted(log: Log): Unit = {
     this.logsToBeDeleted.add((log, time.milliseconds()))
+  }
+
+  private[log] def pendingDeleteLogs(): util.AbstractQueue[(Log, Long)] = {
+    this.logsToBeDeleted
   }
 
   /**
@@ -715,7 +720,7 @@ class LogManager(logDirs: Array[File],
   /**
    *  Delete logs marked for deletion.
    */
-  private def deleteLogs(): Unit = {
+   def deleteLogs(): Unit = {
     try {
       while (!logsToBeDeleted.isEmpty) {
         val (removedLog, scheduleTimeMs) = logsToBeDeleted.take()
@@ -751,26 +756,14 @@ class LogManager(logDirs: Array[File],
     }
     if (removedLog != null) {
       try {
-        //We need to wait until there is no more cleaning task on the log to be deleted before actually deleting it.
+        // We need to wait until there is no more cleaning task on the log to be deleted before actually deleting it.
         if (cleaner != null) {
           cleaner.abortCleaning(topicPartition)
           cleaner.updateCheckpoints(removedLog.dir.getParentFile)
         }
-        val dirName = Log.logDeleteDirName(removedLog.name)
-        removedLog.close()
-        val renamedDir = new File(removedLog.dir.getParent, dirName)
-        val renameSuccessful = removedLog.dir.renameTo(renamedDir)
-        if (renameSuccessful) {
-          checkpointLogStartOffsetsInDir(removedLog.dir.getParentFile)
-          removedLog.dir = renamedDir
-          // change the file pointers for log and index file
-          removedLog.logSegments.foreach(_.updateDir(renamedDir))
-          addLogToBeDeleted(removedLog)
-          removedLog.removeLogMetrics()
-          info(s"Log for partition ${removedLog.topicPartition} is renamed to ${removedLog.dir.getAbsolutePath} and is scheduled for deletion")
-        } else {
-          throw new IOException("Failed to rename log directory from " + removedLog.dir.getAbsolutePath + " to " + renamedDir.getAbsolutePath)
-        }
+        removedLog.prepareForDeletion()
+        checkpointLogStartOffsetsInDir(removedLog.dir.getParentFile)
+        addLogToBeDeleted(removedLog)
       } catch {
         case e: IOException =>
           val msg = s"Error while deleting $topicPartition in dir ${removedLog.dir.getParent}."
