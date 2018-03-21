@@ -153,10 +153,8 @@ class LogManager(logDirs: Array[File],
    * </ol>
    */
   private def createAndValidateLogDirs(dirs: Seq[File], initialOfflineDirs: Seq[File]): ConcurrentLinkedQueue[File] = {
-    if(dirs.map(_.getCanonicalPath).toSet.size < dirs.size)
-      throw new KafkaException("Duplicate log directory found: " + dirs.mkString(", "))
-
     val liveLogDirs = new ConcurrentLinkedQueue[File]()
+    val canonicalPaths = mutable.HashSet.empty[String]
 
     for (dir <- dirs if !initialOfflineDirs.contains(dir)) {
       try {
@@ -168,6 +166,11 @@ class LogManager(logDirs: Array[File],
         }
         if (!dir.isDirectory || !dir.canRead)
           throw new IOException(dir.getAbsolutePath + " is not a readable log directory.")
+
+        if (canonicalPaths.contains(dir.getCanonicalPath))
+          throw new KafkaException("Duplicate log directory found: " + dirs.mkString(", "))
+        canonicalPaths.add(dir.getCanonicalPath)
+
         liveLogDirs.add(dir)
       } catch {
         case e: IOException =>
