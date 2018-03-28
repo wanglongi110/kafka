@@ -39,11 +39,19 @@ class LogDirFailureChannel(logDirNum: Int) extends Logging {
   private val offlineLogDirs = new ConcurrentHashMap[String, String]
   private val offlineLogDirQueue = new ArrayBlockingQueue[String](logDirNum)
 
+
+  /**
+    * @return if a given logDir has been marked as offline
+    */
+  def isLogDirMarkedOffline(logDir : String): Boolean = {
+    offlineLogDirs.containsKey(logDir)
+  }
+
   /*
    * If the given logDir is not already offline, add it to the
    * set of offline log dirs and enqueue it to the logDirFailureEvent queue
    */
-  def maybeAddOfflineLogDir(logDir: String, msg: => String, e: IOException): Unit = {
+  def maybeAddOfflineLogDir(logDir: String, msg: => String, e: Throwable): Unit = {
     error(msg, e)
     if (offlineLogDirs.putIfAbsent(logDir, logDir) == null) {
       offlineLogDirQueue.add(logDir)

@@ -645,6 +645,10 @@ class Log(@volatile var dir: File,
   private def append(records: MemoryRecords, isFromClient: Boolean, assignOffsets: Boolean, leaderEpoch: Int): LogAppendInfo = {
     maybeHandleIOException(s"Error while appending records to $topicPartition in dir ${dir.getParent}") {
       lock synchronized {
+        if (logDirFailureChannel.isLogDirMarkedOffline(dir.getParent))
+          throw new KafkaStorageException(s"The log for partition $topicPartition is offline")
+        checkIfLogOffline()
+
         val batches = records.batches()
 
         if (batches.asScala.isEmpty) {
@@ -728,7 +732,6 @@ class Log(@volatile var dir: File,
     // trim any invalid bytes or partial messages before appending it to the on-disk log
     var validRecords = trimInvalidBytes(records, appendInfo)
 
-    checkIfLogOffline()
     if (assignOffsets) {
       // assign offsets to the message set
       val offset = new LongRef(nextOffsetMetadata.messageOffset)
@@ -807,39 +810,47 @@ class Log(@volatile var dir: File,
       segmentBaseOffset = segment.baseOffset,
       relativePositionInSegment = segment.size)
 
-    segment.append(firstOffset = appendInfo.firstOffset,
-      largestOffset = appendInfo.lastOffset,
-      largestTimestamp = appendInfo.maxTimestamp,
-      shallowOffsetOfMaxTimestamp = appendInfo.offsetOfMaxTimestamp,
-      records = validRecords)
+    try {
+      segment.append(firstOffset = appendInfo.firstOffset,
+        largestOffset = appendInfo.lastOffset,
+        largestTimestamp = appendInfo.maxTimestamp,
+        shallowOffsetOfMaxTimestamp = appendInfo.offsetOfMaxTimestamp,
+        records = validRecords)
 
-    // update the producer state
-    for ((producerId, producerAppendInfo) <- updatedProducers) {
-      producerAppendInfo.maybeCacheTxnFirstOffsetMetadata(logOffsetMetadata)
-      producerStateManager.update(producerAppendInfo)
+      // update the producer state
+      for ((producerId, producerAppendInfo) <- updatedProducers) {
+        producerAppendInfo.maybeCacheTxnFirstOffsetMetadata(logOffsetMetadata)
+        producerStateManager.update(producerAppendInfo)
+      }
+
+      // update the transaction index with the true last stable offset. The last offset visible
+      // to consumers using READ_COMMITTED will be limited by this value and the high watermark.
+      for (completedTxn <- completedTxns) {
+        val lastStableOffset = producerStateManager.completeTxn(completedTxn)
+        segment.updateTxnIndex(completedTxn, lastStableOffset)
+      }
+
+      // always update the last producer id map offset so that the snapshot reflects the current offset
+      // even if there isn't any idempotent data being written
+      producerStateManager.updateMapEndOffset(appendInfo.lastOffset + 1)
+
+      // increment the log end offset
+      updateLogEndOffset(appendInfo.lastOffset + 1)
+
+      // update the first unstable offset (which is used to compute LSO)
+      updateFirstUnstableOffset()
+
+      trace("Appended message set to log %s with first offset: %d, next offset: %d, and messages: %s"
+        .format(this.name, appendInfo.firstOffset, nextOffsetMetadata.messageOffset, validRecords))
+
+      appendInfo
+    } catch {
+      case e : Throwable => {
+        val msg = s"Error while appending records to $topicPartition in dir ${dir.getParent}"
+        logDirFailureChannel.maybeAddOfflineLogDir(dir.getParent, msg, e)
+        throw e
+      }
     }
-
-    // update the transaction index with the true last stable offset. The last offset visible
-    // to consumers using READ_COMMITTED will be limited by this value and the high watermark.
-    for (completedTxn <- completedTxns) {
-      val lastStableOffset = producerStateManager.completeTxn(completedTxn)
-      segment.updateTxnIndex(completedTxn, lastStableOffset)
-    }
-
-    // always update the last producer id map offset so that the snapshot reflects the current offset
-    // even if there isn't any idempotent data being written
-    producerStateManager.updateMapEndOffset(appendInfo.lastOffset + 1)
-
-    // increment the log end offset
-    updateLogEndOffset(appendInfo.lastOffset + 1)
-
-    // update the first unstable offset (which is used to compute LSO)
-    updateFirstUnstableOffset()
-
-    trace("Appended message set to log %s with first offset: %d, next offset: %d, and messages: %s"
-      .format(this.name, appendInfo.firstOffset, nextOffsetMetadata.messageOffset, validRecords))
-
-    appendInfo
   }
 
   def onHighWatermarkIncremented(highWatermark: Long): Unit = {
