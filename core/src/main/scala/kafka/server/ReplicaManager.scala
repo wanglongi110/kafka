@@ -363,30 +363,31 @@ class ReplicaManager(val config: KafkaConfig,
   def stopReplica(topicPartition: TopicPartition, deletePartition: Boolean)  = {
     stateChangeLogger.trace(s"Handling stop replica (delete=$deletePartition) for partition $topicPartition")
 
-    if (deletePartition) {
-      val removedPartition = allPartitions.remove(topicPartition)
-      if (removedPartition eq ReplicaManager.OfflinePartition) {
-        allPartitions.put(topicPartition, ReplicaManager.OfflinePartition)
-        throw new KafkaStorageException(s"Partition $topicPartition is on an offline disk")
-      }
-
-      if (removedPartition != null) {
-        val topicHasPartitions = allPartitions.values.exists(partition => topicPartition.topic == partition.topic)
-        if (!topicHasPartitions)
-          brokerTopicStats.removeMetrics(topicPartition.topic)
-        // this will delete the local log. This call may throw exception if the log is on offline directory
-        removedPartition.delete()
-      } else {
-        stateChangeLogger.trace(s"Ignoring stop replica (delete=$deletePartition) for partition $topicPartition as replica doesn't exist on broker")
-      }
-
-      // Delete log and corresponding folders in case replica manager doesn't hold them anymore.
-      // This could happen when topic is being deleted while broker is down and recovers.
-      if (logManager.getLog(topicPartition).isDefined)
-        logManager.asyncDelete(topicPartition)
-      if (logManager.getLog(topicPartition, isFuture = true).isDefined)
-        logManager.asyncDelete(topicPartition, isFuture = true)
+    val removedPartition = allPartitions.remove(topicPartition)
+    if (removedPartition eq ReplicaManager.OfflinePartition) {
+      // Add it back so that broker still remembers that this is an offline partition.
+      allPartitions.put(topicPartition, ReplicaManager.OfflinePartition)
+      throw new KafkaStorageException(s"Partition $topicPartition is on an offline disk")
     }
+
+    if (removedPartition != null) {
+      val topicHasPartitions = allPartitions.values.exists(partition => topicPartition.topic == partition.topic)
+      if (!topicHasPartitions)
+        brokerTopicStats.removeMetrics(topicPartition.topic)
+      // this will delete the local log. This call may throw exception if the log is on offline directory
+      if (deletePartition)
+        removedPartition.delete()
+    } else {
+      stateChangeLogger.trace(s"Ignoring stop replica (delete=$deletePartition) for partition $topicPartition as replica doesn't exist on broker")
+    }
+
+    // Delete log and corresponding folders in case replica manager doesn't hold them anymore.
+    // This could happen when topic is being deleted while broker is down and recovers.
+    if (deletePartition && logManager.getLog(topicPartition).isDefined)
+      logManager.asyncDelete(topicPartition)
+    if (deletePartition && logManager.getLog(topicPartition, isFuture = true).isDefined)
+      logManager.asyncDelete(topicPartition, isFuture = true)
+
     stateChangeLogger.trace(s"Finished handling stop replica (delete=$deletePartition) for partition $topicPartition")
   }
 
