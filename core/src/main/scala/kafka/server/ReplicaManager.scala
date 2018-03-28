@@ -354,6 +354,7 @@ class ReplicaManager(val config: KafkaConfig,
             logManager.asyncDelete(topicPartition)
           }
         }
+        allPartitions.remove(topicPartition)
       case None =>
         // Delete log and corresponding folders in case replica manager doesn't hold them anymore.
         // This could happen when topic is being deleted while broker is down and recovers.

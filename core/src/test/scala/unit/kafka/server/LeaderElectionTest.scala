@@ -17,6 +17,8 @@
 
 package kafka.server
 
+import java.util.concurrent.{CountDownLatch, Future, TimeUnit}
+
 import org.apache.kafka.common.TopicPartition
 
 import scala.collection.JavaConverters._
@@ -159,6 +161,78 @@ class LeaderElectionTest extends ZooKeeperTestHarness {
       metrics.close()
     }
   }
+
+  @Test
+  def testBecomeFollowerAfterOldLeaderAndIsrRequest() {
+    // start 2 brokers
+    val topic = "new-topic"
+    val tp = new TopicPartition(topic, 0)
+
+    // create topic with 1 partition, 2 replicas, one on each broker
+    createTopic(zkUtils, topic, partitionReplicaAssignment = Map(0 -> Seq(brokerId1)), servers = servers)(0)
+
+    val leaderServer = servers.find(_.config.brokerId == brokerId1).get
+    val currentLeaderEpoch = leaderServer.replicaManager.getPartition(tp).get.getLeaderEpoch
+    val followerServer = servers.find(_.config.brokerId == brokerId2).get
+
+    // start another controller
+    val controllerId = 2
+    val newerControllerEpoch = 3
+
+    val controllerConfig = KafkaConfig.fromProps(TestUtils.createBrokerConfig(controllerId, zkConnect))
+    val securityProtocol = SecurityProtocol.PLAINTEXT
+    val listenerName = ListenerName.forSecurityProtocol(securityProtocol)
+    val brokers = servers.map(s => new Broker(s.config.brokerId, "localhost", TestUtils.boundPort(s), listenerName,
+      securityProtocol))
+    val nodes = brokers.map(_.getNode(listenerName))
+
+    val controllerContext = new ControllerContext(zkUtils)
+    controllerContext.liveBrokers = brokers.toSet
+    val metrics = new Metrics
+    val controllerChannelManager = new ControllerChannelManager(controllerContext, controllerConfig, Time.SYSTEM, metrics)
+    controllerChannelManager.startup()
+
+
+    try {
+      // Send LeaderAndIsrRequest with the exiting leaderEpoch to brokerId2 for it to become follower
+      val partitionStates = Map(
+          tp -> new LeaderAndIsrRequest.PartitionState(newerControllerEpoch, brokerId1, currentLeaderEpoch,
+          Seq(brokerId1, brokerId2).map(Integer.valueOf).asJava, LeaderAndIsr.initialZKVersion,
+          Seq(0, 1).map(Integer.valueOf).asJava, false)
+      )
+      val leaderAndIsrRequestBuilder = new LeaderAndIsrRequest.Builder(
+        ApiKeys.LEADER_AND_ISR.latestVersion, controllerId, newerControllerEpoch, partitionStates.asJava, nodes.toSet.asJava)
+
+      val stopReplicaRequestBuilder = new StopReplicaRequest.Builder(brokerId2, newerControllerEpoch, false, Set(tp).asJava)
+
+      // Send LeaderAndIsrRequest to make brokerId2 the follower
+      val firstLeaderAndIsrResponseReceived = new CountDownLatch(1)
+      controllerChannelManager.sendRequest(brokerId2, ApiKeys.LEADER_AND_ISR, leaderAndIsrRequestBuilder,
+        (r: AbstractResponse) => firstLeaderAndIsrResponseReceived.countDown())
+      firstLeaderAndIsrResponseReceived.await(5000, TimeUnit.MILLISECONDS)
+      assertEquals(0, firstLeaderAndIsrResponseReceived.getCount)
+
+      // Send StopReplicaRequest to stop the partition on brokerId2
+      val stopReplicaResponseReceived = new CountDownLatch(1)
+      controllerChannelManager.sendRequest(brokerId2, ApiKeys.STOP_REPLICA, stopReplicaRequestBuilder,
+        (r: AbstractResponse) => stopReplicaResponseReceived.countDown())
+      stopReplicaResponseReceived.await(5000, TimeUnit.MILLISECONDS)
+      assertEquals(0, stopReplicaResponseReceived.getCount)
+
+      // Send LeaderAndIsrRequest with the exiting leaderEpoch to brokerId2 again
+      val secondLeaderAndIsrResponseReceived = new CountDownLatch(1)
+      controllerChannelManager.sendRequest(brokerId2, ApiKeys.LEADER_AND_ISR, leaderAndIsrRequestBuilder,
+        (r: AbstractResponse) => secondLeaderAndIsrResponseReceived.countDown())
+      secondLeaderAndIsrResponseReceived.await(5000, TimeUnit.MILLISECONDS)
+      assertEquals(0, secondLeaderAndIsrResponseReceived.getCount)
+      assertEquals(1, followerServer.replicaManager.replicaFetcherManager.fetcherThreadMap.size)
+
+    } finally {
+      controllerChannelManager.shutdown()
+      metrics.close()
+    }
+  }
+
 
   private def staleControllerEpochCallback(response: AbstractResponse): Unit = {
     val leaderAndIsrResponse = response.asInstanceOf[LeaderAndIsrResponse]
