@@ -358,8 +358,12 @@ class ReplicaManager(val config: KafkaConfig,
       case None =>
         // Delete log and corresponding folders in case replica manager doesn't hold them anymore.
         // This could happen when topic is being deleted while broker is down and recovers.
-        if (deletePartition && logManager.getLog(topicPartition).isDefined)
+        if (deletePartition && logManager.getLog(topicPartition).isDefined) {
           logManager.asyncDelete(topicPartition)
+          val topicHasPartitions = allPartitions.values.exists(_.topic == topicPartition.topic)
+          if (!topicHasPartitions)
+            brokerTopicStats.removeMetrics(topicPartition.topic)
+        }
         stateChangeLogger.trace(s"Broker $localBrokerId ignoring stop replica (delete=$deletePartition) for partition $topicPartition as replica doesn't exist on broker")
     }
     stateChangeLogger.trace(s"Broker $localBrokerId finished handling stop replica (delete=$deletePartition) for partition $topicPartition")

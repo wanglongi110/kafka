@@ -52,6 +52,10 @@ abstract class AbstractIndex[K, V](@volatile private var _file: File, val baseOf
     _file
   }
 
+  def fileName: String = {
+    _file.getName
+  }
+
   def file_=(f: File) {
     _file = f
   }

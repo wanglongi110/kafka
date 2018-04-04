@@ -402,8 +402,8 @@ class LogSegment(val log: FileRecords,
    */
   def updateDir(dir: File): Unit = {
     log.setFile(new File(dir, log.file.getName))
-    index.file = new File(dir, index.file.getName)
-    timeIndex.file = new File(dir, timeIndex.file.getName)
+    index.file = new File(dir, index.fileName)
+    timeIndex.file = new File(dir, timeIndex.fileName)
     txnIndex.file = new File(dir, txnIndex.file.getName)
   }
 

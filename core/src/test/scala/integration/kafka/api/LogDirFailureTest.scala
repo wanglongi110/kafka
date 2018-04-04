@@ -26,7 +26,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.clients.producer.{ProducerConfig, ProducerRecord}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.Utils
-import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderForPartitionException}
+import org.apache.kafka.common.errors.{KafkaStorageException, NotLeaderForPartitionException, UnknownTopicOrPartitionException}
 import org.junit.{Before, Test}
 import org.junit.Assert.assertTrue
 
@@ -111,7 +111,10 @@ class LogDirFailureTest extends IntegrationTestHarness {
         e.getCause match {
           case t: KafkaStorageException =>
           case t: NotLeaderForPartitionException => // This may happen if ProduceRequest version <= 3
-          case t: Throwable => fail(s"send() should fail with either KafkaStorageException or NotLeaderForPartitionException instead of ${t.toString}")
+          case t: UnknownTopicOrPartitionException => // HOTFIX: This is needed after we remove the partition from the
+                                                      // replica manager on StopReplicaRequest(delete=false)
+          case t: Throwable => fail(s"send() should fail with either KafkaStorageException or " +
+            s"NotLeaderForPartitionException or UnknownTopicOrPartitionException instead of ${t.toString}")
         }
       case e: Throwable => fail(s"send() should fail with either KafkaStorageException or NotLeaderForPartitionException instead of ${e.toString}")
     }

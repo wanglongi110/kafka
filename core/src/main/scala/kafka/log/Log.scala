@@ -28,7 +28,7 @@ import kafka.common.{InvalidOffsetException, KafkaException, LongRef}
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server.{BrokerTopicStats, FetchDataInfo, LogDirFailureChannel, LogOffsetMetadata}
 import kafka.utils._
-import org.apache.kafka.common.errors.{CorruptRecordException, KafkaStorageException, OffsetOutOfRangeException, RecordBatchTooLargeException, RecordTooLargeException, UnsupportedForMessageFormatException}
+import org.apache.kafka.common.errors._
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.requests.{IsolationLevel, ListOffsetRequest}
 
@@ -185,7 +185,7 @@ class Log(@volatile var dir: File,
   /* the actual segments of the log */
   private val segments: ConcurrentNavigableMap[java.lang.Long, LogSegment] = new ConcurrentSkipListMap[java.lang.Long, LogSegment]
 
-  val leaderEpochCache: LeaderEpochCache = initializeLeaderEpochCache()
+  var leaderEpochCache: LeaderEpochCache = initializeLeaderEpochCache()
 
   locally {
     val startMs = time.milliseconds
@@ -1265,11 +1265,11 @@ class Log(@volatile var dir: File,
     val dirName = logDeleteDirName(name)
     val renamedDir = new File(dir.getParent, dirName)
     lock synchronized {
-      close()
       if (dir.renameTo(renamedDir)) {
         dir = renamedDir
         // change the file pointers for log and index file
         logSegments.foreach(_.updateDir(renamedDir))
+        leaderEpochCache = initializeLeaderEpochCache()
         removeLogMetrics()
         info(s"Log for partition ${topicPartition} is renamed to ${dir.getAbsolutePath} and is scheduled for deletion")
       } else {

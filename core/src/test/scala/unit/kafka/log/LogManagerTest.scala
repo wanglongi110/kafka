@@ -341,6 +341,15 @@ class LogManagerTest {
   }
 
   @Test
+  def testAppendAndCloseAfterAsyncDelete(): Unit = {
+    val log = logManager.getOrCreateLog(new TopicPartition(name, 0), logConfig)
+
+    val removedLog = logManager.asyncDelete(new TopicPartition(name, 0))
+    assertNotNull(removedLog.appendAsLeader(TestUtils.singletonRecords("test".getBytes()), leaderEpoch = 0))
+    removedLog.flush()
+  }
+
+  @Test
   def testLogScheduledForDeletion(): Unit = {
     logManager.getOrCreateLog(new TopicPartition(name, 0), logConfig)
     logManager.asyncDelete(new TopicPartition(name, 0))
