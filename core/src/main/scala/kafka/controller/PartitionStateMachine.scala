@@ -46,6 +46,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
   private val noOpPartitionLeaderSelector = new NoOpLeaderSelector(controllerContext)
 
   private val stateChangeLogger = KafkaController.stateChangeLogger
+  var offlinePartitionCount = 0
 
   this.logIdent = "[Partition state machine on Controller " + controllerId + "]: "
 
@@ -66,7 +67,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
    */
   def shutdown() {
     partitionState.clear()
-
+    offlinePartitionCount = 0
     info("Stopped partition state machine")
   }
 
@@ -117,6 +118,11 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
     }
   }
 
+  private def changeStateTo(partition: TopicAndPartition, currentState: PartitionState, targetState: PartitionState): Unit = {
+    partitionState.put(partition, targetState)
+    updateControllerMetrics(partition, currentState, targetState)
+  }
+
   /**
    * This API exercises the partition's state machine. It ensures that every state transition happens from a legal
    * previous state to the target state. Valid state transitions are:
@@ -149,7 +155,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
       assertValidTransition(topicAndPartition, targetState)
       targetState match {
         case NewPartition =>
-          partitionState.put(topicAndPartition, NewPartition)
+          changeStateTo(topicAndPartition, currState, targetState)
           val assignedReplicas = controllerContext.partitionReplicaAssignment(topicAndPartition).mkString(",")
           stateChangeLogger.trace("Controller %d epoch %d changed partition %s state from %s to %s with assigned replicas %s"
                                     .format(controllerId, controller.epoch, topicAndPartition, currState, targetState,
@@ -166,7 +172,7 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
               electLeaderForPartition(topic, partition, leaderSelector)
             case _ => // should never come here since illegal previous states are checked above
           }
-          partitionState.put(topicAndPartition, OnlinePartition)
+          changeStateTo(topicAndPartition, currState, targetState)
           val leader = controllerContext.partitionLeadershipInfo(topicAndPartition).leaderAndIsr.leader
           stateChangeLogger.trace("Controller %d epoch %d changed partition %s from %s to %s with leader %d"
                                     .format(controllerId, controller.epoch, topicAndPartition, currState, targetState, leader))
@@ -175,12 +181,12 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
           // should be called when the leader for a partition is no longer alive
           stateChangeLogger.trace("Controller %d epoch %d changed partition %s state from %s to %s"
                                     .format(controllerId, controller.epoch, topicAndPartition, currState, targetState))
-          partitionState.put(topicAndPartition, OfflinePartition)
+          changeStateTo(topicAndPartition, currState, targetState)
           // post: partition has no alive leader
         case NonExistentPartition =>
           stateChangeLogger.trace("Controller %d epoch %d changed partition %s state from %s to %s"
                                     .format(controllerId, controller.epoch, topicAndPartition, currState, targetState))
-          partitionState.put(topicAndPartition, NonExistentPartition)
+          changeStateTo(topicAndPartition, currState, targetState)
           // post: partition state is deleted from all brokers and zookeeper
       }
     } catch {
@@ -202,11 +208,11 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
           // else, check if the leader for partition is alive. If yes, it is in Online state, else it is in Offline state
           if (controllerContext.isReplicaOnline(currentLeaderIsrAndEpoch.leaderAndIsr.leader, topicPartition))
             // leader is alive
-            partitionState.put(topicPartition, OnlinePartition)
+            changeStateTo(topicPartition, NonExistentPartition, OnlinePartition)
           else
-            partitionState.put(topicPartition, OfflinePartition)
+            changeStateTo(topicPartition, NonExistentPartition, OfflinePartition)
         case None =>
-          partitionState.put(topicPartition, NewPartition)
+          changeStateTo(topicPartition, NonExistentPartition, NewPartition)
       }
     }
   }
@@ -341,6 +347,16 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
         val failMsg = "LeaderAndIsr information doesn't exist for partition %s in %s state"
                         .format(topicAndPartition, partitionState(topicAndPartition))
         throw new StateChangeFailedException(failMsg)
+    }
+  }
+
+  private def updateControllerMetrics(partition: TopicAndPartition, currentState: PartitionState, targetState: PartitionState) : Unit = {
+    if (!controller.topicDeletionManager.isTopicQueuedUpForDeletion(partition.topic)) {
+      if (currentState != OfflinePartition && targetState == OfflinePartition) {
+        offlinePartitionCount = offlinePartitionCount + 1
+      } else if (currentState == OfflinePartition && targetState != OfflinePartition) {
+        offlinePartitionCount = offlinePartitionCount - 1
+      }
     }
   }
 }

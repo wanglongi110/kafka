@@ -225,7 +225,6 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
 
   @volatile private var activeControllerId = -1
   @volatile private var offlinePartitionCount = 0
-  @volatile private var preferredReplicaImbalanceCount = 0
   @volatile private var globalTopicCount = 0
   @volatile private var globalPartitionCount = 0
 
@@ -240,13 +239,6 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     "OfflinePartitionsCount",
     new Gauge[Int] {
       def value: Int = offlinePartitionCount
-    }
-  )
-
-  newGauge(
-    "PreferredReplicaImbalanceCount",
-    new Gauge[Int] {
-      def value: Int = preferredReplicaImbalanceCount
     }
   )
 
@@ -374,7 +366,6 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     // shutdown leader rebalance scheduler
     kafkaScheduler.shutdown()
     offlinePartitionCount = 0
-    preferredReplicaImbalanceCount = 0
     globalTopicCount = 0
     globalPartitionCount = 0
 
@@ -1733,23 +1724,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
       if (!isActive) {
         0
       } else {
-        controllerContext.partitionLeadershipInfo.count { case (tp, leadershipInfo) =>
-          !controllerContext.liveOrShuttingDownBrokerIds.contains(leadershipInfo.leaderAndIsr.leader) &&
-            !topicDeletionManager.isTopicQueuedUpForDeletion(tp.topic)
-        }
-      }
-
-    preferredReplicaImbalanceCount =
-      if (!isActive) {
-        0
-      } else {
-        controllerContext.allPartitions.count { topicAndPartition =>
-          val replicas = controllerContext.partitionReplicaAssignment(topicAndPartition)
-          val preferredReplica = replicas.head
-          val leadershipInfo = controllerContext.partitionLeadershipInfo.get(topicAndPartition)
-          leadershipInfo.map(_.leaderAndIsr.leader != preferredReplica).getOrElse(false) &&
-            !topicDeletionManager.isTopicQueuedUpForDeletion(topicAndPartition.topic)
-        }
+        partitionStateMachine.offlinePartitionCount
       }
 
     globalTopicCount = if (!isActive) 0 else controllerContext.allTopics.size
