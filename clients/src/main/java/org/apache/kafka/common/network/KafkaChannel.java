@@ -110,6 +110,10 @@ public class KafkaChannel {
         return id;
     }
 
+    public SelectionKey selectionKey() {
+        return transportLayer.selectionKey();
+    }
+
     /**
      * externally muting a channel should be done via selector to ensure proper state handling
      */

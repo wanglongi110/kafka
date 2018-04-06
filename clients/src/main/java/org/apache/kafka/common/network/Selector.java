@@ -691,7 +691,10 @@ public class Selector implements Selectable, AutoCloseable {
     }
 
     private void doClose(KafkaChannel channel, boolean notifyDisconnect) {
+        SelectionKey key = channel.selectionKey();
         try {
+            immediatelyConnectedKeys.remove(key);
+            keysWithBufferedRead.remove(key);
             channel.close();
         } catch (IOException e) {
             log.error("Exception closing connection to node {}:", channel.id(), e);

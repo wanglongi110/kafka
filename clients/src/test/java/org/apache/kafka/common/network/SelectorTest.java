@@ -450,6 +450,7 @@ public class SelectorTest {
         expectLastCall().andThrow(new IOException());
 
         SelectionKey selectionKey = control.createMock(SelectionKey.class);
+        expect(kafkaChannel.selectionKey()).andStubReturn(selectionKey);
         expect(selectionKey.channel()).andReturn(SocketChannel.open());
         expect(selectionKey.readyOps()).andStubReturn(SelectionKey.OP_CONNECT);
 
