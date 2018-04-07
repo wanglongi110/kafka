@@ -36,6 +36,7 @@ import org.apache.kafka.common.record.MemoryRecords.RecordFilter.BatchRetention
 
 import scala.collection.mutable
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ListBuffer
 
 /**
  * The cleaner is responsible for removing obsolete records from logs which have the "compact" retention strategy.
@@ -399,8 +400,10 @@ private[log] class Cleaner(val id: Int,
 
     // group the segments and clean the groups
     info("Cleaning log %s (cleaning prior to %s, discarding tombstones prior to %s)...".format(log.name, new Date(cleanableHorizonMs), new Date(deleteHorizonMs)))
-    for (group <- groupSegmentsBySize(log.logSegments(0, endOffset), log.config.segmentSize, log.config.maxIndexSize, cleanable.firstUncleanableOffset))
+    for (group <- groupSegmentsBySize(log.logSegments(0, endOffset), log.config.segmentSize, log.config.maxIndexSize, cleanable.firstUncleanableOffset)) {
+      info(s"cleaning for log group ${group.map(_.baseOffset)}")
       cleanSegments(log, group, offsetMap, deleteHorizonMs, stats)
+    }
 
     // record buffer utilization
     stats.bufferUtilization = offsetMap.utilization
@@ -424,23 +427,31 @@ private[log] class Cleaner(val id: Int,
                                  map: OffsetMap,
                                  deleteHorizonMs: Long,
                                  stats: CleanerStats) {
-    // create a new segment with the suffix .cleaned appended to both the log and index name
-    val logFile = new File(segments.head.log.file.getPath + Log.CleanedFileSuffix)
-    logFile.delete()
-    val indexFile = new File(segments.head.index.file.getPath + Log.CleanedFileSuffix)
-    val timeIndexFile = new File(segments.head.timeIndex.file.getPath + Log.CleanedFileSuffix)
-    val txnIndexFile = new File(segments.head.txnIndex.file.getPath + Log.CleanedFileSuffix)
-    indexFile.delete()
-    timeIndexFile.delete()
-    txnIndexFile.delete()
+    val maxIndexSize = segments.head.index.maxIndexSize
+    val maxTimeIndexSize = segments.head.timeIndex.maxIndexSize
+    val indexIntervalBytes = segments.head.indexIntervalBytes
+    val txnIndex = createTransactionIndex(segments.head.baseOffset, log)
+    var cleanedSegment = createCleanedLogSegment(segments.head.baseOffset, log, txnIndex, maxIndexSize,
+                                                 maxTimeIndexSize, indexIntervalBytes)
+    val cleanedSegments = ListBuffer(cleanedSegment)
 
-    val startOffset = segments.head.baseOffset
-    val records = FileRecords.open(logFile, false, log.initFileSize(), log.config.preallocate)
-    val index = new OffsetIndex(indexFile, startOffset, segments.head.index.maxIndexSize)
-    val timeIndex = new TimeIndex(timeIndexFile, startOffset, segments.head.timeIndex.maxIndexSize)
-    val txnIndex = new TransactionIndex(startOffset, txnIndexFile)
-    val cleaned = new LogSegment(records, index, timeIndex, txnIndex, startOffset,
-      segments.head.indexIntervalBytes, log.config.randomSegmentJitter, time)
+//    // create a new segment with the suffix .cleaned appended to both the log and index name
+//    val logFile = new File(segments.head.log.file.getPath + Log.CleanedFileSuffix)
+//    logFile.delete()
+//    val indexFile = new File(segments.head.index.file.getPath + Log.CleanedFileSuffix)
+//    val timeIndexFile = new File(segments.head.timeIndex.file.getPath + Log.CleanedFileSuffix)
+//    val txnIndexFile = new File(segments.head.txnIndex.file.getPath + Log.CleanedFileSuffix)
+//    indexFile.delete()
+//    timeIndexFile.delete()
+//    txnIndexFile.delete()
+//
+//    val startOffset = segments.head.baseOffset
+//    val records = FileRecords.open(logFile, false, log.initFileSize(), log.config.preallocate)
+//    val index = new OffsetIndex(indexFile, startOffset, segments.head.index.maxIndexSize)
+//    val timeIndex = new TimeIndex(timeIndexFile, startOffset, segments.head.timeIndex.maxIndexSize)
+//    val txnIndex = new TransactionIndex(startOffset, txnIndexFile)
+//    val cleaned = new LogSegment(records, index, timeIndex, txnIndex, startOffset,
+//      segments.head.indexIntervalBytes, log.config.randomSegmentJitter, time)
 
     try {
       // clean segments into the new destination segment
@@ -452,45 +463,91 @@ private[log] class Cleaner(val id: Int,
 
         val startOffset = oldSegmentOpt.baseOffset
         val upperBoundOffset = nextSegmentOpt.map(_.baseOffset).getOrElse(map.latestOffset + 1)
-        val abortedTransactions = log.collectAbortedTransactions(startOffset, upperBoundOffset)
-        val transactionMetadata = CleanedTransactionMetadata(abortedTransactions, Some(txnIndex))
+        var abortedTransactions = log.collectAbortedTransactions(startOffset, upperBoundOffset)
+        var transactionMetadata = CleanedTransactionMetadata(abortedTransactions, Some(txnIndex))
 
         val retainDeletes = oldSegmentOpt.lastModified > deleteHorizonMs
         info("Cleaning segment %s in log %s (largest timestamp %s) into %s, %s deletes."
-          .format(startOffset, log.name, new Date(oldSegmentOpt.largestTimestamp), cleaned.baseOffset, if(retainDeletes) "retaining" else "discarding"))
-        cleanInto(log.topicPartition, oldSegmentOpt, cleaned, map, retainDeletes, log.config.maxMessageSize, transactionMetadata,
-          log.activeProducers, stats)
+          .format(startOffset, log.name, new Date(oldSegmentOpt.largestTimestamp), cleanedSegment.baseOffset, if(retainDeletes) "retaining" else "discarding"))
+
+        var done = false
+        var startPosition = 0
+        while (!done) {
+          cleanInto(log.topicPartition, oldSegmentOpt, cleanedSegment, map, retainDeletes, log.config.maxMessageSize,
+            transactionMetadata, log.activeProducers, stats, startPosition) match {
+            case Some(CleanIntoResult(nextOffset, nextPosition)) =>
+              doneCleaningSegment(cleanedSegment, oldSegmentOpt.lastModified)
+              val txnIndex = createTransactionIndex(nextOffset, log)
+              abortedTransactions = log.collectAbortedTransactions(nextOffset, upperBoundOffset)
+              transactionMetadata = CleanedTransactionMetadata(abortedTransactions, Some(txnIndex))
+              cleanedSegment = createCleanedLogSegment(nextOffset, log, txnIndex, maxIndexSize, maxTimeIndexSize, indexIntervalBytes)
+              cleanedSegments += cleanedSegment
+              startPosition = nextPosition
+            case None =>
+              done = true
+          }
+        }
 
         currentSegmentOpt = nextSegmentOpt
       }
 
-      // trim log segment
-      cleaned.log.trim()
-
-      // trim excess index
-      index.trimToValidSize()
-
-      // Append the last index entry
-      cleaned.onBecomeInactiveSegment()
-
-      // trim time index
-      timeIndex.trimToValidSize()
-
-      // flush new segment to disk before swap
-      cleaned.flush()
-
-      // update the modification date to retain the last modified date of the original files
-      val modified = segments.last.lastModified
-      cleaned.lastModified = modified
+      doneCleaningSegment(cleanedSegment, segments.last.lastModified)
 
       // swap in new segment
-      info("Swapping in cleaned segment %d for segment(s) %s in log %s.".format(cleaned.baseOffset, segments.map(_.baseOffset).mkString(","), log.name))
-      log.replaceSegments(cleaned, segments)
+      info("Swapping in cleaned segment %s for segment(s) %s in log %s.".format(cleanedSegments.map(_.baseOffset).mkString(","),
+        segments.map(_.baseOffset).mkString(","), log.name))
+      log.replaceSegments(cleanedSegments, segments)
     } catch {
       case e: LogCleaningAbortedException =>
-        cleaned.delete()
+        cleanedSegments.foreach(_.delete())
         throw e
     }
+  }
+
+  private def createTransactionIndex(baseOffset: Long, log: Log): TransactionIndex = {
+    val txnIndexFile = new File(Log.transactionIndexFile(log.dir, baseOffset).getPath + Log.CleanedFileSuffix)
+    txnIndexFile.delete()
+    new TransactionIndex(baseOffset, txnIndexFile)
+  }
+
+  private def createCleanedLogSegment(baseOffset: Long,
+                                      log: Log,
+                                      txnIndex: TransactionIndex,
+                                      maxIndexSize: Int,
+                                      maxTimeIndexSize: Int,
+                                      indexIntervalBytes: Int) : LogSegment = {
+    // create a new segment with the suffix .cleaned appended to both the log and index name
+    val logFile = new File(Log.logFile(log.dir, baseOffset).getPath + Log.CleanedFileSuffix)
+    logFile.delete()
+    val indexFile = new File(Log.offsetIndexFile(log.dir, baseOffset).getPath + Log.CleanedFileSuffix)
+    val timeIndexFile = new File(Log.timeIndexFile(log.dir, baseOffset).getPath + Log.CleanedFileSuffix)
+    indexFile.delete()
+    timeIndexFile.delete()
+
+    val records = FileRecords.open(logFile, false, log.initFileSize(), log.config.preallocate)
+    val index = new OffsetIndex(indexFile, baseOffset, maxIndexSize)
+    val timeIndex = new TimeIndex(timeIndexFile, baseOffset, maxTimeIndexSize)
+    new LogSegment(records, index, timeIndex, txnIndex, baseOffset, indexIntervalBytes, log.config.randomSegmentJitter, time)
+  }
+
+  private def doneCleaningSegment(seg: LogSegment, lastModified: Long) {
+    // trim log segment
+    seg.log.trim()
+
+    // trim excess index
+    seg.index.trimToValidSize()
+
+    // Append the last index entry
+    seg.onBecomeInactiveSegment()
+
+    // trim time index
+    seg.timeIndex.trimToValidSize()
+
+    // flush new segment to disk before swap
+    seg.flush()
+
+    // update the modification date to retain the last modified date of the original files
+    seg.lastModified = lastModified
   }
 
   /**
@@ -513,7 +570,8 @@ private[log] class Cleaner(val id: Int,
                              maxLogMessageSize: Int,
                              transactionMetadata: CleanedTransactionMetadata,
                              activeProducers: Map[Long, ProducerIdEntry],
-                             stats: CleanerStats) {
+                             stats: CleanerStats,
+                             startPosition: Int = 0): Option[CleanIntoResult] = {
     val logCleanerFilter = new RecordFilter {
       var discardBatchRecords: Boolean = _
 
@@ -539,9 +597,11 @@ private[log] class Cleaner(val id: Int,
         else
           Cleaner.this.shouldRetainRecord(source, map, retainDeletes, batch, record, stats)
       }
+
+      override def canBeFilteredTo(batch: RecordBatch): Boolean = batch.lastOffset() <= dest.baseOffset + Int.MaxValue
     }
 
-    var position = 0
+    var position = startPosition
     while (position < source.log.sizeInBytes) {
       checkDone(topicPartition)
       // read a chunk of messages and copy any that are to be retained to the write buffer to be written out
@@ -573,8 +633,17 @@ private[log] class Cleaner(val id: Int,
       // if we read bytes but didn't get even one complete message, our I/O buffer is too small, grow it and try again
       if (readBuffer.limit() > 0 && result.messagesRead == 0)
         growBuffers(maxLogMessageSize)
+
+      // Hotfix: we may have to clean this source segment into two segments if this source segment contains
+      // an offset greater than base_offset + Int.MaxValue.
+      if (!result.filteredAll) {
+        restoreBuffers()
+        // Return the starting offset of the records and position that
+        return Some(CleanIntoResult(result.nextOffset, position))
+      }
     }
     restoreBuffers()
+    None
   }
 
   private def shouldDiscardBatch(batch: RecordBatch,
@@ -944,3 +1013,5 @@ private[log] class CleanedTransactionMetadata(val abortedTransactions: mutable.P
 private class AbortedTransactionMetadata(val abortedTxn: AbortedTxn) {
   var lastObservedBatchOffset: Option[Long] = None
 }
+
+private case class CleanIntoResult(stopOffset: Long, stopPosition: Int)

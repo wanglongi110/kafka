@@ -150,6 +150,11 @@ public class MemoryRecords extends AbstractRecords {
         ByteBufferOutputStream bufferOutputStream = new ByteBufferOutputStream(destinationBuffer);
 
         for (MutableRecordBatch batch : batches) {
+            // Hotfix: LIKAFKA-13793
+            if (!filter.canBeFilteredTo(batch)) {
+                return new FilterResult(false, destinationBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
+                                        batch.baseOffset(), maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
+            }
             bytesRead += batch.sizeInBytes();
 
             BatchRetention batchRetention = filter.checkBatchRetention(batch);
@@ -230,12 +235,12 @@ public class MemoryRecords extends AbstractRecords {
             // avoid the need for additional allocations.
             ByteBuffer outputBuffer = bufferOutputStream.buffer();
             if (outputBuffer != destinationBuffer)
-                return new FilterResult(outputBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
-                        maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
+                return new FilterResult(true, outputBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
+                        maxOffset + 1, maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
         }
 
-        return new FilterResult(destinationBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
-                maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
+        return new FilterResult(true, destinationBuffer, messagesRead, bytesRead, messagesRetained, bytesRetained,
+                maxOffset + 1, maxOffset, maxTimestamp, shallowOffsetOfMaxTimestamp);
     }
 
     private static MemoryRecordsBuilder buildRetainedRecordsInto(RecordBatch originalBatch,
@@ -331,31 +336,42 @@ public class MemoryRecords extends AbstractRecords {
          * explicitly discarded with {@link BatchRetention#DELETE} will be considered.
          */
         protected abstract boolean shouldRetainRecord(RecordBatch recordBatch, Record record);
+
+        // Hotfix: LIKAFKA-13793
+        public boolean canBeFilteredTo(RecordBatch batch) {
+            return true;
+        }
     }
 
     public static class FilterResult {
+        public final boolean filteredAll; //Hotfix: LIKAFKA-13793
         public final ByteBuffer output;
         public final int messagesRead;
         public final int bytesRead;
         public final int messagesRetained;
         public final int bytesRetained;
+        public final long nextOffset; //Hotfix: LIKAFKA-13793
         public final long maxOffset;
         public final long maxTimestamp;
         public final long shallowOffsetOfMaxTimestamp;
 
-        public FilterResult(ByteBuffer output,
+        public FilterResult(boolean filteredAll,
+                            ByteBuffer output,
                             int messagesRead,
                             int bytesRead,
                             int messagesRetained,
                             int bytesRetained,
+                            long nextOffset,
                             long maxOffset,
                             long maxTimestamp,
                             long shallowOffsetOfMaxTimestamp) {
+            this.filteredAll = filteredAll;
             this.output = output;
             this.messagesRead = messagesRead;
             this.bytesRead = bytesRead;
             this.messagesRetained = messagesRetained;
             this.bytesRetained = bytesRetained;
+            this.nextOffset = nextOffset;
             this.maxOffset = maxOffset;
             this.maxTimestamp = maxTimestamp;
             this.shallowOffsetOfMaxTimestamp = shallowOffsetOfMaxTimestamp;
