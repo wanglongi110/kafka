@@ -1550,9 +1550,26 @@ class KafkaApis(val requestChannel: RequestChannel,
       val apiVersionRequest = request.body[ApiVersionsRequest]
       if (apiVersionRequest.hasUnsupportedRequestVersion)
         apiVersionRequest.getErrorResponse(requestThrottleMs, Errors.UNSUPPORTED_VERSION.exception)
-      else
-        ApiVersionsResponse.apiVersionsResponse(requestThrottleMs,
-          config.interBrokerProtocolVersion.recordVersion.value)
+      else {
+        /**
+          * HOTFIX LIKAFKA-16384: brokers should suggest the max ProduceRequest ApiVersion that supports the broker default
+          * configured message format version instead of always suggesting the maximum ApiVersion.
+          */
+        val maxProduceApiVersion: Short = config.logMessageFormatVersion.recordVersion match {
+          case RecordVersion.V0 => 1
+          case RecordVersion.V1 => 2
+          case RecordVersion.V2 => 7
+        }
+        val response = ApiVersionsResponse.apiVersionsResponse(requestThrottleMs, config.interBrokerProtocolVersion.recordVersion.value)
+        val apiVersions = response.apiVersions().asScala.toList.map { apiVersion =>
+          if (apiVersion.apiKey == ApiKeys.PRODUCE.id) {
+            new ApiVersionsResponse.ApiVersion(ApiKeys.PRODUCE.id, apiVersion.minVersion, maxProduceApiVersion)
+          } else {
+            apiVersion
+          }
+        }.asJava
+        new ApiVersionsResponse(requestThrottleMs, Errors.NONE, apiVersions)
+      }
     }
     sendResponseMaybeThrottle(request, createResponseCallback)
   }
