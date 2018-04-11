@@ -114,7 +114,7 @@ class ReplicaFetcherThread(name: String,
       trace(s"Follower ${replica.brokerId} set replica high watermark for partition $topicPartition to $followerHighWatermark")
     if (quota.isThrottled(topicPartition))
       quota.record(records.sizeInBytes)
-    replicaMgr.brokerTopicStats.updateReplicationBytesIn(topicPartition.topic(), records.sizeInBytes)
+    replicaMgr.brokerTopicStats.updateReplicationBytesIn(records.sizeInBytes)
   }
 
   def maybeWarnIfOversizedRecords(records: MemoryRecords, topicPartition: TopicPartition): Unit = {
