@@ -1272,7 +1272,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           * HOTFIX LIKAFKA-16384: brokers should suggest the max ProduceRequest ApiVersion that supports the broker default
           * configured message format version instead of always suggesting the maximum ApiVersion.
           */
-        val maxProduceApiVersion: Short = config.interBrokerProtocolVersion.messageFormatVersion match {
+        val maxProduceApiVersion: Short = config.logMessageFormatVersion.messageFormatVersion match {
           case RecordBatch.MAGIC_VALUE_V0 => 1
           case RecordBatch.MAGIC_VALUE_V1 => 2
           case RecordBatch.MAGIC_VALUE_V2 => 4
