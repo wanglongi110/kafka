@@ -1030,6 +1030,7 @@ object TestUtils extends Logging {
                    defaultConfig = defaultConfig,
                    cleanerConfig = cleanerConfig,
                    ioThreads = 4,
+                   sanityCheckThreads = 2,
                    flushCheckMs = 1000L,
                    flushRecoveryOffsetCheckpointMs = 10000L,
                    flushStartOffsetCheckpointMs = 10000L,

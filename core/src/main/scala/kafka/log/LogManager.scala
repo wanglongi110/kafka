@@ -56,6 +56,7 @@ class LogManager(logDirs: Array[File],
                  val defaultConfig: LogConfig,
                  val cleanerConfig: CleanerConfig,
                  ioThreads: Int,
+                 sanityCheckThreads: Int,
                  val flushCheckMs: Long,
                  val flushRecoveryOffsetCheckpointMs: Long,
                  val flushStartOffsetCheckpointMs: Long,
@@ -460,7 +461,7 @@ class LogManager(logDirs: Array[File],
       val newLeaderPartitions = new LinkedBlockingQueue[TopicPartition]()
       newPartitionsForSanityCheck.put(dir.getAbsolutePath, newLeaderPartitions)
 
-      for (i <- 0 until ioThreads) {
+      for (i <- 0 until sanityCheckThreads) {
         id += 1
         val thread = KafkaThread.daemon(s"kafka-log-sanity-check-$id", new Runnable {
           override def run(): Unit = {
@@ -485,7 +486,7 @@ class LogManager(logDirs: Array[File],
     val stopThreadsForSanityCheck = new TopicPartition("", -1);
     // Add ioThreads number of tokens to each queue (one queue per log directory)
     // This ensures that all sanity check threads will exist since each thread will take at most one token
-    for (i <- 0 until ioThreads)
+    for (i <- 0 until sanityCheckThreads)
       newPartitionsForSanityCheck.values.foreach(_.add(stopThreadsForSanityCheck))
 
     removeMetric("OfflineLogDirectoryCount")
@@ -899,6 +900,7 @@ object LogManager {
       defaultConfig = defaultLogConfig,
       cleanerConfig = cleanerConfig,
       ioThreads = config.numRecoveryThreadsPerDataDir,
+      sanityCheckThreads = config.numSanityCheckThreadsPerDataDir,
       flushCheckMs = config.logFlushSchedulerIntervalMs,
       flushRecoveryOffsetCheckpointMs = config.logFlushOffsetCheckpointIntervalMs,
       flushStartOffsetCheckpointMs = config.logFlushStartOffsetCheckpointIntervalMs,
