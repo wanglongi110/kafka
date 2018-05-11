@@ -19,7 +19,7 @@ package kafka.controller
 
 import kafka.common.TopicAndPartition
 import kafka.server.ConfigType
-import kafka.utils.Logging
+import kafka.utils.{Logging, ZkUtils}
 import kafka.utils.ZkUtils._
 
 import scala.collection.{Set, mutable}
@@ -246,9 +246,9 @@ class TopicDeletionManager(controller: KafkaController, eventManager: Controller
     topicsToBeDeleted.remove(topic)
     partitionsToBeDeleted.retain(_.topic != topic)
     val zkUtils = controllerContext.zkUtils
-    zkUtils.deletePathRecursive(getTopicPath(topic))
-    zkUtils.deletePathRecursive(getEntityConfigPath(ConfigType.Topic, topic))
-    zkUtils.deletePath(getDeleteTopicPath(topic))
+    zkUtils.transactionalDeletePathRecursive(controllerContext.epochZkVersion, getTopicPath(topic))
+    zkUtils.transactionalDeletePathRecursive(controllerContext.epochZkVersion, getEntityConfigPath(ConfigType.Topic, topic))
+    zkUtils.transactionalDeletePath(controllerContext.epochZkVersion, getDeleteTopicPath(topic))
     controllerContext.removeTopic(topic)
 
     // the topic with earliest timestamp has been successfully deleted, now resume deletion for the next topic

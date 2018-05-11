@@ -169,7 +169,7 @@ class ControllerContext(val zkUtils: ZkUtils) {
 object KafkaController extends Logging {
   val stateChangeLogger = new StateChangeLogger("state.change.logger")
   val InitialControllerEpoch = 1
-  val InitialControllerEpochZkVersion = 1
+  val InitialControllerEpochZkVersion = 0
 
   case class StateChangeLogger(override val loggerName: String) extends Logging
 
@@ -721,7 +721,8 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
       case oe: Throwable => error("Error while incrementing controller epoch", oe)
 
     }
-    info("Controller %d incremented epoch to %d".format(config.brokerId, controllerContext.epoch))
+    info("Controller %d incremented epoch to %d and epoch ZkVersion is now %d".format(
+      config.brokerId, controllerContext.epoch, controllerContext.epochZkVersion))
   }
 
   private def registerSessionExpirationListener() = {
@@ -910,7 +911,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
                                                  replicas: Seq[Int]) {
     val partitionsAndReplicasForThisTopic = controllerContext.partitionReplicaAssignmentForTopic(topicAndPartition.topic)
     partitionsAndReplicasForThisTopic.put(topicAndPartition, replicas)
-    updateAssignedReplicasForPartition(topicAndPartition, partitionsAndReplicasForThisTopic)
+    updateAssignedReplicasForTopic(topicAndPartition, partitionsAndReplicasForThisTopic)
     info("Updated assigned replicas for partition %s being reassigned to %s ".format(topicAndPartition, replicas.mkString(",")))
     // update the assigned replica list after a successful zookeeper write
     controllerContext.updatePartitionReplicaAssignment(topicAndPartition, replicas)
@@ -1048,17 +1049,18 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     val updatedPartitionsBeingReassigned = partitionsBeingReassigned - topicAndPartition
     // write the new list to zookeeper
     if (updatedPartitionsBeingReassigned.size < partitionsBeingReassigned.size)
-      zkUtils.updatePartitionReassignmentData(updatedPartitionsBeingReassigned.mapValues(_.newReplicas))
+      zkUtils.transactionalUpdatePartitionReassignmentData(controllerContext.epochZkVersion,
+        updatedPartitionsBeingReassigned.mapValues(_.newReplicas))
     // update the cache. NO-OP if the partition's reassignment was never started
     controllerContext.partitionsBeingReassigned.remove(topicAndPartition)
   }
 
-  def updateAssignedReplicasForPartition(topicAndPartition: TopicAndPartition,
-                                         newReplicaAssignmentForTopic: Map[TopicAndPartition, Seq[Int]]) {
+  def updateAssignedReplicasForTopic(topicAndPartition: TopicAndPartition,
+                                     newReplicaAssignmentForTopic: Map[TopicAndPartition, Seq[Int]]) {
     try {
       val zkPath = getTopicPath(topicAndPartition.topic)
       val jsonPartitionMap = zkUtils.replicaAssignmentZkData(newReplicaAssignmentForTopic.map(e => e._1.partition.toString -> e._2))
-      zkUtils.updatePersistentPath(zkPath, jsonPartitionMap)
+      zkUtils.transactionalUpdatePersistentPath(controllerContext.epochZkVersion, zkPath, jsonPartitionMap)
       debug("Updated path %s with %s for replica assignment".format(zkPath, jsonPartitionMap))
     } catch {
       case _: ZkNoNodeException => throw new IllegalStateException("Topic %s doesn't exist".format(topicAndPartition.topic))
@@ -1079,7 +1081,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
       }
     }
     if (!isTriggeredByAutoRebalance)
-      zkUtils.deletePath(ZkUtils.PreferredReplicaLeaderElectionPath)
+      zkUtils.transactionalDeletePath(controllerContext.epochZkVersion, ZkUtils.PreferredReplicaLeaderElectionPath)
   }
 
   /**
@@ -1142,8 +1144,9 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
 
             val newLeaderAndIsr = leaderAndIsr.newLeaderAndIsr(newLeader, newIsr)
             // update the new leadership decision in zookeeper or retry
-            val (updateSucceeded, newVersion) = ReplicationUtils.updateLeaderAndIsr(zkUtils, topic, partition,
-              newLeaderAndIsr, epoch, leaderAndIsr.zkVersion)
+            val (updateSucceeded, newVersion) = ReplicationUtils.transactionalUpdateLeaderAndIsr(
+              zkUtils, topic, partition, newLeaderAndIsr, leaderAndIsr.zkVersion,
+              controllerContext.epoch, controllerContext.epochZkVersion)
 
             val leaderWithNewVersion = newLeaderAndIsr.withZkVersion(newVersion)
             finalLeaderIsrAndControllerEpoch = Some(LeaderIsrAndControllerEpoch(leaderWithNewVersion, epoch))
@@ -1194,8 +1197,9 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
           // assigned replica list
           val newLeaderAndIsr = leaderAndIsr.newEpochAndZkVersion
           // update the new leadership decision in zookeeper or retry
-          val (updateSucceeded, newVersion) = ReplicationUtils.updateLeaderAndIsr(zkUtils, topic,
-            partition, newLeaderAndIsr, epoch, leaderAndIsr.zkVersion)
+          val (updateSucceeded, newVersion) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils, topic,
+            partition, newLeaderAndIsr, leaderAndIsr.zkVersion,
+            controllerContext.epoch, controllerContext.epochZkVersion)
 
           val leaderWithNewVersion = newLeaderAndIsr.withZkVersion(newVersion)
           finalLeaderIsrAndControllerEpoch = Some(LeaderIsrAndControllerEpoch(leaderWithNewVersion, epoch))
@@ -1365,7 +1369,8 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
       val nonExistentTopics = topicsToBeDeleted -- controllerContext.allTopics
       if (nonExistentTopics.nonEmpty) {
         warn("Ignoring request to delete non-existing topics " + nonExistentTopics.mkString(","))
-        nonExistentTopics.foreach(topic => zkUtils.deletePathRecursive(getDeleteTopicPath(topic)))
+        nonExistentTopics.foreach(topic =>
+          zkUtils.transactionalDeletePathRecursive(controllerContext.epochZkVersion, getDeleteTopicPath(topic)))
       }
       topicsToBeDeleted --= nonExistentTopics
       if (config.deleteTopicEnable) {
@@ -1386,7 +1391,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
         // If delete topic is disabled remove entries under zookeeper path : /admin/delete_topics
         for (topic <- topicsToBeDeleted) {
           info("Removing " + getDeleteTopicPath(topic) + " since delete topic is disabled")
-          zkUtils.deletePath(getDeleteTopicPath(topic))
+          zkUtils.transactionalDeletePath(controllerContext.epochZkVersion, getDeleteTopicPath(topic))
         }
       }
     }
@@ -1462,7 +1467,8 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
         }
       } finally {
         // delete the notifications
-        currentSequenceNumbers.map(x => controllerContext.zkUtils.deletePath(ZkUtils.IsrChangeNotificationPath + "/" + x))
+        val deletePaths = currentSequenceNumbers.map(ZkUtils.IsrChangeNotificationPath + "/" + _)
+        zkUtils.transactionalDeletePaths(controllerContext.epochZkVersion, deletePaths)
       }
     }
 
@@ -1506,7 +1512,8 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
         onBrokerLogDirFailure(brokerIds)
       } finally {
         // delete processed children
-        sequenceNumbers.map(x => zkUtils.deletePath(ZkUtils.LogDirEventNotificationPath + "/" + x))
+        val deletePaths = sequenceNumbers.map(ZkUtils.LogDirEventNotificationPath + "/" + _)
+        zkUtils.transactionalDeletePaths(controllerContext.epochZkVersion, deletePaths)
       }
     }
   }
