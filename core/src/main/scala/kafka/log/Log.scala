@@ -148,6 +148,10 @@ class Log(@volatile var dir: File,
   /* last time it was flushed */
   private val lastflushedTime = new AtomicLong(time.milliseconds)
 
+  val numSanityCheckedSegments: AtomicInteger = new AtomicInteger(0)
+
+  val numCorruptedSegments: AtomicInteger = new AtomicInteger(0)
+
   def initFileSize() : Int = {
     if (config.preallocate)
       config.segmentSize
@@ -371,6 +375,7 @@ class Log(@volatile var dir: File,
         segment.timeIndex.sanityCheck()
         segment.txnIndex.sanityCheck()
       }
+      numSanityCheckedSegments.incrementAndGet()
     } catch {
       case e: java.lang.IllegalArgumentException =>
         // This includes all segments of the partition
@@ -389,6 +394,7 @@ class Log(@volatile var dir: File,
         segment.index.sanityCheck()
         segment.timeIndex.sanityCheck()
         segment.txnIndex.sanityCheck()
+        numSanityCheckedSegments.incrementAndGet()
       } catch {
         case e: java.lang.IllegalArgumentException =>
           warn(s"Found a corrupted index file due to ${e.getMessage}}. deleting ${segment.timeIndex.file.getAbsolutePath}, " +
@@ -397,6 +403,7 @@ class Log(@volatile var dir: File,
           Files.delete(segment.index.file.toPath)
           segment.txnIndex.delete()
           recoverSegment(segment)
+          numCorruptedSegments.incrementAndGet()
       }
       segment.sanityChecked = true
     }

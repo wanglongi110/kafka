@@ -137,6 +137,20 @@ class LogManager(logDirs: Array[File],
     )
   }
 
+  newGauge(
+    "numSanityCheckedSegments",
+    new Gauge[Long] {
+      def value = logs.values.map(log => log.numSanityCheckedSegments.get().toLong).sum
+    }
+  )
+
+  newGauge(
+    "numCorruptedSegments",
+    new Gauge[Long] {
+      def value = logs.values.map(log => log.numCorruptedSegments.get().toLong).sum
+    }
+  )
+
   private def addLogToBeDeleted(log: Log): Unit = {
     this.logsToBeDeleted.add((log, time.milliseconds()))
   }
