@@ -282,8 +282,23 @@ class LogCleanerManagerTest extends JUnitSuite with Logging {
     cleanerManager.setCleaningState(tp, LogCleaningAborted)
     cleanerManager.doneDeleting(tp)
     assertEquals(LogCleaningPaused, cleanerManager.cleaningState(tp).get)
-
   }
+
+  /**
+    * When checking for logs for cleaning
+    * we shouldn't consider logs that have not yet been sanity checked
+    */
+  @Test
+  def testLogsNotSanityChecked(): Unit = {
+    val log: Log = createLog(TestUtils.singletonRecords("test".getBytes).sizeInBytes()*5, LogConfig.Compact)
+    while(log.numberOfSegments < 8)
+      log.appendAsLeader(records(log.logEndOffset.toInt, log.logEndOffset.toInt, time.milliseconds()), leaderEpoch = 0)
+    log.sanityChecked = false
+    val cleanerManager: LogCleanerManager = createCleanerManager(log)
+
+    assertTrue(cleanerManager.grabFilthiestCompactedLog(time).isEmpty)
+  }
+
 
   private def createCleanerManager(log: Log): LogCleanerManager = {
     val logs = new Pool[TopicPartition, Log]()
@@ -310,6 +325,7 @@ class LogCleanerManagerTest extends JUnitSuite with Logging {
       maxProducerIdExpirationMs = 60 * 60 * 1000,
       producerIdExpirationCheckIntervalMs = LogManager.ProducerIdExpirationCheckIntervalMs,
       logDirFailureChannel = new LogDirFailureChannel(10))
+    log.sanityChecked = true
     log
   }
 

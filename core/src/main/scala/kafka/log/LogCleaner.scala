@@ -103,7 +103,9 @@ class LogCleaner(val config: CleanerConfig,
                                         throttleDown = true,
                                         "cleaner-io",
                                         "bytes",
-                                        time = time)
+                                        time = time,
+                                        needThrottle = () => true,
+                                        tags = Map.empty)
 
   /* the threads */
   private val cleaners = (0 until config.numThreads).map(new CleanerThread(_))

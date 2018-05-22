@@ -21,9 +21,9 @@ import java.io._
 import java.nio.file.Files
 import java.util
 import java.util.concurrent._
-import java.util.concurrent.atomic.AtomicInteger
 
-import com.yammer.metrics.core.Gauge
+import com.yammer.metrics.Metrics
+import com.yammer.metrics.core.{Gauge, MetricName}
 import kafka.admin.AdminUtils
 import kafka.api.{ApiVersion, KAFKA_1_0_IV0}
 import kafka.common.KafkaException
@@ -62,6 +62,8 @@ class LogManager(logDirs: Array[File],
                  val flushStartOffsetCheckpointMs: Long,
                  val retentionCheckMs: Long,
                  val maxPidExpirationMs: Int,
+                 val sanityCheckQuotaSegmentPerSecPerDataDir: Int,
+                 val minRequestQueueSizeToEnableSanityCheckQuota: Int,
                  scheduler: Scheduler,
                  val brokerState: BrokerState,
                  brokerTopicStats: BrokerTopicStats,
@@ -81,11 +83,8 @@ class LogManager(logDirs: Array[File],
 
   private val _liveLogDirs: ConcurrentLinkedQueue[File] = createAndValidateLogDirs(logDirs, initialOfflineDirs)
 
-  private val numPartitionsForSanityCheck: AtomicInteger = new AtomicInteger(0)
   private val threadsForSanityCheck = mutable.ListBuffer.empty[KafkaThread]
-  private val partitionsAlreadySanityChecked = mutable.Set.empty[TopicPartition]
-  private val newPartitionsForSanityCheck = mutable.Map.empty[String, LinkedBlockingQueue[TopicPartition]]
-  @volatile private var isShuttingDown = false
+  private val partitionsForSanityCheck = mutable.Map.empty[String, LinkedBlockingQueue[TopicPartition]]
 
   def liveLogDirs: Array[File] = {
     if (_liveLogDirs.size == logDirs.size)
@@ -93,6 +92,8 @@ class LogManager(logDirs: Array[File],
     else
       _liveLogDirs.asScala.toArray
   }
+
+  def numPartitionsForSanityCheck: Int = partitionsForSanityCheck.values.map(e=>e.size()).sum
 
   private val dirLocks = lockLogDirs(liveLogDirs)
   @volatile private var recoveryPointCheckpoints = liveLogDirs.map(dir =>
@@ -104,7 +105,6 @@ class LogManager(logDirs: Array[File],
   private val preferredLogDirs = new ConcurrentHashMap[TopicPartition, String]()
 
   loadLogs()
-
 
   // public, so we can access this from kafka.admin.DeleteTopicTest
   val cleaner: LogCleaner =
@@ -123,7 +123,7 @@ class LogManager(logDirs: Array[File],
   newGauge(
     "numPartitionsForSanityCheck",
     new Gauge[Int] {
-      def value = numPartitionsForSanityCheck.get()
+      def value = numPartitionsForSanityCheck
     }
   )
 
@@ -274,6 +274,8 @@ class LogManager(logDirs: Array[File],
 
     if (sanityCheckLogsOnStartupEnabled)
       current.sanityCheckSegments()
+    else
+      partitionsForSanityCheck(logDir.getParent).put(topicPartition)
 
     if (logDir.getName.endsWith(Log.DeleteDirSuffix)) {
       addLogToBeDeleted(current)
@@ -298,6 +300,7 @@ class LogManager(logDirs: Array[File],
     val jobs = mutable.Map.empty[File, Seq[Future[_]]]
 
     for (dir <- liveLogDirs) {
+      partitionsForSanityCheck.put(dir.getAbsolutePath, new LinkedBlockingQueue[TopicPartition]())
       try {
         val pool = Executors.newFixedThreadPool(ioThreads)
         threadPools.append(pool)
@@ -418,41 +421,19 @@ class LogManager(logDirs: Array[File],
       cleaner.startup()
   }
 
-  def scheduleLogsForSanityCheck(newLeaderPartitions: Set[TopicPartition]) {
-    if (sanityCheckLogsOnStartupEnabled)
-      return
 
-    val uncheckedPartitions = newLeaderPartitions.filterNot(partitionsAlreadySanityChecked)
-    uncheckedPartitions.foreach(partitionsAlreadySanityChecked.add)
-
-    info(s"Schedule sanity check for partitions ${uncheckedPartitions.mkString(",")}")
-    uncheckedPartitions.foreach(tp => {
-      val log = logs.get(tp)
-      if (log != null) {
-        val dir = log.dir.getParent
-        newPartitionsForSanityCheck(dir).put(tp)
-        numPartitionsForSanityCheck.incrementAndGet()
-      }
-    })
-  }
-
-  private def sanityCheckLog(newLeaderPartitions: LinkedBlockingQueue[TopicPartition], dir: String) {
-    while (!isShuttingDown) {
-      val tp = newLeaderPartitions.take()
-      if (tp.partition() < 0) {
-        info(s"${Thread.currentThread().getName} will stop on LogManager shutdown.")
+  private def sanityCheckLog(partitions: LinkedBlockingQueue[TopicPartition], dir: String, throttler: Throttler) {
+    while (true) {
+      val tp = partitions.poll()
+      if (tp == null)
         return
-      }
-
       val log = logs.get(tp)
-      numPartitionsForSanityCheck.decrementAndGet()
-
       if (log != null) {
         val startMs = time.milliseconds
         try {
-          val segmentNum = log.sanityCheckSegments()
-          info(s"Completed sanity check for log $tp with $segmentNum log segments in ${time.milliseconds - startMs} ms. " +
-            s"Remaining ${numPartitionsForSanityCheck.get()} leader partitions for sanity check.")
+          log.sanityCheckSegments(Some(throttler))
+          info(s"Completed sanity check for log $tp in ${time.milliseconds - startMs} ms. " +
+            s"Remaining $numPartitionsForSanityCheck partitions for sanity check.")
         } catch {
           case e: IOException =>
             logDirFailureChannel.maybeAddOfflineLogDir(dir, s"Error while sanity checking log $dir", e)
@@ -470,16 +451,31 @@ class LogManager(logDirs: Array[File],
     if (sanityCheckLogsOnStartupEnabled)
       return
 
+    def needToThrottle: Boolean = {
+      val requestQueueSizeMetric = Metrics.defaultRegistry().allMetrics().get(
+        new MetricName("kafka.network", "RequestChannel", "RequestQueueSize", null, "kafka.network:type=RequestChannel,name=RequestQueueSize")).asInstanceOf[Gauge[Int]]
+      requestQueueSizeMetric.value() > minRequestQueueSizeToEnableSanityCheckQuota
+    }
+
     var id = 0
     for (dir <- liveLogDirs) {
-      val newLeaderPartitions = new LinkedBlockingQueue[TopicPartition]()
-      newPartitionsForSanityCheck.put(dir.getAbsolutePath, newLeaderPartitions)
+      val partitionsForSanityCheckPerDir = partitionsForSanityCheck(dir.getAbsolutePath)
+      val sanityCheckThrottler = new Throttler(
+        desiredRatePerSec = sanityCheckQuotaSegmentPerSecPerDataDir,
+        checkIntervalMs = 100,
+        throttleDown = true,
+        metricName = s"sanity-check-per-sec",
+        units = "entries",
+        time = time,
+        () => needToThrottle,
+        tags = immutable.Map("logDir" -> dir.getName))
+
 
       for (i <- 0 until sanityCheckThreads) {
         id += 1
         val thread = KafkaThread.daemon(s"kafka-log-sanity-check-$id", new Runnable {
           override def run(): Unit = {
-            sanityCheckLog(newLeaderPartitions, dir.getAbsolutePath)
+            sanityCheckLog(partitionsForSanityCheckPerDir, dir.getAbsolutePath, sanityCheckThrottler)
           }
         })
         threadsForSanityCheck.append(thread)
@@ -494,14 +490,7 @@ class LogManager(logDirs: Array[File],
   def shutdown() {
     info("Shutting down.")
 
-    isShuttingDown = true
-
-    // Tell kafka-log-sanity-check threads to stop
-    val stopThreadsForSanityCheck = new TopicPartition("", -1);
-    // Add ioThreads number of tokens to each queue (one queue per log directory)
-    // This ensures that all sanity check threads will exist since each thread will take at most one token
-    for (i <- 0 until sanityCheckThreads)
-      newPartitionsForSanityCheck.values.foreach(_.add(stopThreadsForSanityCheck))
+    partitionsForSanityCheck.values.foreach(_.clear())
 
     removeMetric("OfflineLogDirectoryCount")
     for (dir <- logDirs) {
@@ -714,6 +703,8 @@ class LogManager(logDirs: Array[File],
             brokerTopicStats = brokerTopicStats,
             logDirFailureChannel = logDirFailureChannel)
 
+          // newly created log doesn't need to do sanity check
+          log.sanityChecked = true
           logs.put(topicPartition, log)
 
           info("Created log for partition [%s,%d] in %s with properties {%s}."
@@ -920,6 +911,8 @@ object LogManager {
       flushStartOffsetCheckpointMs = config.logFlushStartOffsetCheckpointIntervalMs,
       retentionCheckMs = config.logCleanupIntervalMs,
       maxPidExpirationMs = config.transactionIdExpirationMs,
+      sanityCheckQuotaSegmentPerSecPerDataDir = config.sanityCheckQuotaSegmentPerSecPerDataDir,
+      minRequestQueueSizeToEnableSanityCheckQuota = config.minRequestQueueSizeToEnableSanityCheckQuota,
       scheduler = kafkaScheduler,
       brokerState = brokerState,
       brokerTopicStats = brokerTopicStats,

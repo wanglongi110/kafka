@@ -1092,7 +1092,6 @@ class ReplicaManager(val config: KafkaConfig,
         replicaFetcherManager.shutdownIdleFetcherThreads()
         onLeadershipChange(partitionsBecomeLeader, partitionsBecomeFollower)
 
-        logManager.scheduleLogsForSanityCheck(partitionsBecomeLeader.map(_.topicPartition))
         BecomeLeaderOrFollowerResult(responseMap, Errors.NONE)
       }
     }

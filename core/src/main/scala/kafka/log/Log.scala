@@ -21,7 +21,7 @@ import java.io.{File, IOException}
 import java.nio.file.Files
 import java.text.NumberFormat
 import java.util.concurrent.atomic._
-import java.util.concurrent.{ConcurrentNavigableMap, ConcurrentSkipListMap, TimeUnit}
+import java.util.concurrent._
 
 import kafka.api.KAFKA_0_10_0_IV0
 import kafka.common.{InvalidOffsetException, KafkaException, LongRef}
@@ -151,6 +151,8 @@ class Log(@volatile var dir: File,
   val numSanityCheckedSegments: AtomicInteger = new AtomicInteger(0)
 
   val numCorruptedSegments: AtomicInteger = new AtomicInteger(0)
+
+  @volatile var sanityChecked : Boolean = false
 
   def initFileSize() : Int = {
     if (config.preallocate)
@@ -354,14 +356,13 @@ class Log(@volatile var dir: File,
   }
 
   // Sanity check all segments of this log
-  def sanityCheckSegments(): Int = {
-    segments.keySet().asScala.foreach( baseOffset => {
-        val segment = segments.get(baseOffset)
-        if (segment != null)
-          sanityCheckSegment(segment)
-      }
-    )
-    segments.size()
+  def sanityCheckSegments(throttler: Option[Throttler] = None): Unit = {
+    segments.keySet().asScala.foreach(baseOffset => {
+      val segment = segments.get(baseOffset)
+      if (segment != null)
+        sanityCheckSegment(segment, throttler)
+    })
+    sanityChecked = true
   }
 
   // If the given segment failed sanity check, sanity check all segments from the earliest up to the given segment
@@ -379,16 +380,20 @@ class Log(@volatile var dir: File,
     } catch {
       case e: java.lang.IllegalArgumentException =>
         // This includes all segments of the partition
-        logSegments(0, segment.baseOffset + 1, false).foreach(sanityCheckSegment)
+        logSegments(0, segment.baseOffset + 1, false).foreach(sanityCheckSegment(_))
     }
     segment.sanityChecked = true
   }
 
   // Sanity check the given segment
-  private def sanityCheckSegment(segment: LogSegment) {
+  private def sanityCheckSegment(segment: LogSegment, throttler: Option[Throttler] = None) {
     if (segment.sanityChecked)
       return
 
+    throttler match {
+      case Some(t) => t.maybeThrottle(1)
+      case None =>
+    }
     lock synchronized {
       try {
         segment.index.sanityCheck()
@@ -1331,10 +1336,7 @@ class Log(@volatile var dir: File,
       var segmentEntry = segments.firstEntry
       while (segmentEntry != null) {
         val segment = segmentEntry.getValue
-        sanityCheckSegmentMaybeFromBeginning(segment)
         val nextSegmentEntry = segments.higherEntry(segmentEntry.getKey)
-        if (nextSegmentEntry != null)
-          sanityCheckSegmentMaybeFromBeginning(nextSegmentEntry.getValue)
         val (nextSegment, upperBoundOffset, isLastSegmentAndEmpty) = if (nextSegmentEntry != null)
           (nextSegmentEntry.getValue, nextSegmentEntry.getValue.baseOffset, false)
         else
@@ -1356,7 +1358,7 @@ class Log(@volatile var dir: File,
    * or because the log size is > retentionSize
    */
   def deleteOldSegments(): Int = {
-    if (!config.delete) return 0
+    if (!config.delete || !sanityChecked) return 0
     deleteRetentionMsBreachedSegments() + deleteRetentionSizeBreachedSegments() + deleteLogStartOffsetBreachedSegments()
   }
 

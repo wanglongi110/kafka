@@ -53,6 +53,7 @@ class ReplicaTest {
       maxProducerIdExpirationMs = 60 * 60 * 1000,
       producerIdExpirationCheckIntervalMs = LogManager.ProducerIdExpirationCheckIntervalMs,
       logDirFailureChannel = new LogDirFailureChannel(10))
+    log.sanityChecked = true
 
     replica = new Replica(brokerId = 0,
       topicPartition = new TopicPartition("foo", 0),

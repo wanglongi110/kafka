@@ -124,7 +124,7 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
       this.timeOfLastRun = now
       val lastClean = allCleanerCheckpoints
       val dirtyLogs = logs.filter {
-        case (_, log) => log.config.compact  // match logs that are marked as compacted
+        case (_, log) => log.config.compact && log.sanityChecked // match logs that are marked as compacted and have been sanity checked
       }.filterNot {
         case (topicPartition, _) => inProgress.contains(topicPartition) // skip any logs already in-progress
       }.map {

@@ -1036,15 +1036,17 @@ object TestUtils extends Logging {
                    flushStartOffsetCheckpointMs = 10000L,
                    retentionCheckMs = 1000L,
                    maxPidExpirationMs = 60 * 60 * 1000,
+                   sanityCheckQuotaSegmentPerSecPerDataDir = 10,
+                   minRequestQueueSizeToEnableSanityCheckQuota = 20,
                    scheduler = time.scheduler,
                    time = time,
                    brokerState = BrokerState(),
                    brokerTopicStats = new BrokerTopicStats,
                    logDirFailureChannel = new LogDirFailureChannel(logDirs.size),
                    interBrokerProtocolVersion = ApiVersion.latestVersion,
-                   sanityCheckLogsOnStartupEnabled = false
-    )
+                   sanityCheckLogsOnStartupEnabled = false)
   }
+
 
   @deprecated("This method has been deprecated and it will be removed in a future release.", "0.10.0.0")
   def sendMessages(servers: Seq[KafkaServer],

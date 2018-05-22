@@ -102,6 +102,7 @@ abstract class AbstractLogCleanerIntegrationTest {
         maxProducerIdExpirationMs = 60 * 60 * 1000,
         producerIdExpirationCheckIntervalMs = LogManager.ProducerIdExpirationCheckIntervalMs,
         logDirFailureChannel = new LogDirFailureChannel(10))
+      log.sanityChecked = true
       logMap.put(partition, log)
       this.logs += log
     }

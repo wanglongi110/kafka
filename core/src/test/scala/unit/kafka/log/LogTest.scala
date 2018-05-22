@@ -2180,6 +2180,29 @@ class LogTest {
     assertEquals(log.logStartOffset, 15)
   }
 
+  @Test
+  def testLogDeletionForLogNotSanityCheck() {
+    def createRecords = TestUtils.singletonRecords("test".getBytes)
+    val logConfig = createLogConfig(segmentBytes = createRecords.sizeInBytes * 5)
+    val log = createLog(logDir, logConfig)
+
+    for (_ <- 0 until 15)
+      log.appendAsLeader(createRecords, leaderEpoch = 0)
+    assertEquals("should have 3 segments", 3, log.numberOfSegments)
+    assertEquals(log.logStartOffset, 0)
+    log.onHighWatermarkIncremented(log.logEndOffset)
+
+    log.maybeIncrementLogStartOffset(15)
+    log.sanityChecked = false
+    // Should not delete any segments if the log is not yet sanity checked
+    log.deleteOldSegments()
+    assertEquals("should have 3 segments", 3, log.numberOfSegments)
+
+    log.sanityChecked = true
+    log.deleteOldSegments()
+    assertEquals("should have 1 segments", 1, log.numberOfSegments)
+  }
+
   def epochCache(log: Log): LeaderEpochFileCache = {
     log.leaderEpochCache.asInstanceOf[LeaderEpochFileCache]
   }
@@ -2994,7 +3017,7 @@ class LogTest {
                 time: Time = mockTime,
                 maxProducerIdExpirationMs: Int = 60 * 60 * 1000,
                 producerIdExpirationCheckIntervalMs: Int = LogManager.ProducerIdExpirationCheckIntervalMs): Log = {
-    Log(dir = dir,
+    val log = Log(dir = dir,
         config = config,
         logStartOffset = logStartOffset,
         recoveryPoint = recoveryPoint,
@@ -3004,6 +3027,8 @@ class LogTest {
         maxProducerIdExpirationMs = maxProducerIdExpirationMs,
         producerIdExpirationCheckIntervalMs = producerIdExpirationCheckIntervalMs,
         logDirFailureChannel = new LogDirFailureChannel(10))
+    log.sanityChecked = true
+    log
   }
 
   private def allAbortedTransactions(log: Log) = log.logSegments.flatMap(_.txnIndex.allAbortedTxns)

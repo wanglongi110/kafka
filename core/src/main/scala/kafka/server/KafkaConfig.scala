@@ -116,6 +116,8 @@ object Defaults {
   val LogMessageTimestampDifferenceMaxMs = Long.MaxValue
   val NumRecoveryThreadsPerDataDir = 1
   val NumSanityCheckThreadsPerDataDir = 1
+  val SanityCheckQuotaSegmentPerSecPerDataDir = 10
+  val MinRequestQueueSizeToEnableSanityCheckQuota = 20
   val AutoCreateTopicsEnable = true
   val MinInSyncReplicas = 1
 
@@ -314,6 +316,8 @@ object KafkaConfig {
   val LogMaxIdMapSnapshotsProp = LogConfigPrefix + "max.id.map.snapshots"
   val NumRecoveryThreadsPerDataDirProp = "num.recovery.threads.per.data.dir"
   val NumSanityCheckThreadsPerDataDirProp = "num.sanity.check.threads.per.data.dir"
+  val SanityCheckQuotaSegmentPerSecPerDataDirProp = "sanity.check.quota.segment.per.second.per.data.dir"
+  val MinRequestQueueSizeToEnableSanityCheckQuotaProp = "min.request.queue.size.to.enable.sanity.check.quota"
   val AutoCreateTopicsEnableProp = "auto.create.topics.enable"
   val MinInSyncReplicasProp = "min.insync.replicas"
   val CreateTopicPolicyClassNameProp = "create.topic.policy.class.name"
@@ -543,6 +547,10 @@ object KafkaConfig {
     "The maximum timestamp difference allowed should be no greater than log.retention.ms to avoid unnecessarily frequent log rolling."
   val NumRecoveryThreadsPerDataDirDoc = "The number of threads per data directory to be used for log recovery at startup and flushing at shutdown"
   val NumSanityCheckThreadsPerDataDirDoc = "The number of threads per data directory to be used for sanity check after broker becomes leader for partitions. It is only needed if sanity.check.logs.on.startup.enabled is false"
+  val SanityCheckQuotaSegmentPerSecPerDataDirDoc = "Segment sanity check quota represented as the number of segments checked per second per data directory. It is only needed if sanity.check.logs.on.startup.enabled is false"
+  val MinRequestQueueSizeToEnableSanityCheckQuotaDoc = "The sanity check quota, as specified by sanity.check.quota.segment.per.second.per.data.dir, will be applied to throttle the segment sanity check rate, " +
+    "if the current request queue size is larger than min.request.queue.size.to.enable.sanity.check.quota. " +
+    "It is only needed if sanity.check.logs.on.startup.enabled is false"
   val AutoCreateTopicsEnableDoc = "Enable auto creation of topic on the server"
   val MinInSyncReplicasDoc = "When a producer sets acks to \"all\" (or \"-1\"), " +
     "min.insync.replicas specifies the minimum number of replicas that must acknowledge " +
@@ -781,6 +789,8 @@ object KafkaConfig {
       .define(LogPreAllocateProp, BOOLEAN, Defaults.LogPreAllocateEnable, MEDIUM, LogPreAllocateEnableDoc)
       .define(NumRecoveryThreadsPerDataDirProp, INT, Defaults.NumRecoveryThreadsPerDataDir, atLeast(1), HIGH, NumRecoveryThreadsPerDataDirDoc)
       .define(NumSanityCheckThreadsPerDataDirProp, INT, Defaults.NumSanityCheckThreadsPerDataDir, atLeast(0), HIGH, NumSanityCheckThreadsPerDataDirDoc)
+      .define(SanityCheckQuotaSegmentPerSecPerDataDirProp, INT, Defaults.SanityCheckQuotaSegmentPerSecPerDataDir, atLeast(1), HIGH, SanityCheckQuotaSegmentPerSecPerDataDirDoc)
+      .define(MinRequestQueueSizeToEnableSanityCheckQuotaProp, INT, Defaults.MinRequestQueueSizeToEnableSanityCheckQuota, atLeast(5), HIGH, MinRequestQueueSizeToEnableSanityCheckQuotaDoc)
       .define(AutoCreateTopicsEnableProp, BOOLEAN, Defaults.AutoCreateTopicsEnable, HIGH, AutoCreateTopicsEnableDoc)
       .define(MinInSyncReplicasProp, INT, Defaults.MinInSyncReplicas, atLeast(1), HIGH, MinInSyncReplicasDoc)
       .define(LogMessageFormatVersionProp, STRING, Defaults.LogMessageFormatVersion, MEDIUM, LogMessageFormatVersionDoc)
@@ -975,6 +985,8 @@ class KafkaConfig(val props: java.util.Map[_, _], doLog: Boolean) extends Abstra
   val logCleanerThreads = getInt(KafkaConfig.LogCleanerThreadsProp)
   val numRecoveryThreadsPerDataDir = getInt(KafkaConfig.NumRecoveryThreadsPerDataDirProp)
   val numSanityCheckThreadsPerDataDir = getInt(KafkaConfig.NumSanityCheckThreadsPerDataDirProp)
+  val sanityCheckQuotaSegmentPerSecPerDataDir = getInt(KafkaConfig.SanityCheckQuotaSegmentPerSecPerDataDirProp)
+  val minRequestQueueSizeToEnableSanityCheckQuota = getInt(KafkaConfig.MinRequestQueueSizeToEnableSanityCheckQuotaProp)
   val logFlushSchedulerIntervalMs = getLong(KafkaConfig.LogFlushSchedulerIntervalMsProp)
   val logFlushOffsetCheckpointIntervalMs = getInt(KafkaConfig.LogFlushOffsetCheckpointIntervalMsProp).toLong
   val logFlushStartOffsetCheckpointIntervalMs = getInt(KafkaConfig.LogFlushStartOffsetCheckpointIntervalMsProp).toLong
