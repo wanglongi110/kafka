@@ -81,6 +81,12 @@ public interface Producer<K, V> extends Closeable {
     public void flush();
 
     /**
+     * Flush any accumulated records from the producer. If the close does not complete within the timeout, throws exception.
+     * This API is added as a HOTFIX
+     */
+    public void flush(long timeout, TimeUnit unit);
+
+    /**
      * Get a list of partitions for the given topic for custom partition assignment. The partition metadata will change
      * over time so this list should not be cached.
      */
