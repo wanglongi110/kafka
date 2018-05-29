@@ -17,10 +17,14 @@
 package kafka.controller
 
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 import kafka.common.TopicAndPartition
 import kafka.server.ConfigType
 import kafka.utils.{Logging, ZkUtils}
 import kafka.utils.ZkUtils._
+import org.I0Itec.zkclient.IZkDataListener
+import org.I0Itec.zkclient.exception.{ZkNoNodeException, ZkNodeExistsException}
 
 import scala.collection.{Set, mutable}
 
@@ -62,19 +66,29 @@ class TopicDeletionManager(controller: KafkaController, eventManager: Controller
   val controllerContext = controller.controllerContext
   val partitionStateMachine = controller.partitionStateMachine
   val replicaStateMachine = controller.replicaStateMachine
-  val isDeleteTopicEnabled = controller.config.deleteTopicEnable
+  val zkUtils = controllerContext.zkUtils
+  var isDeleteTopicEnabled = controller.config.deleteTopicEnable
   val topicsToBeDeleted = mutable.Map.empty[String, Long]
   val partitionsToBeDeleted = mutable.Set.empty[TopicAndPartition]
   val topicsIneligibleForDeletion = mutable.Set.empty[String]
 
+  // Try to create the znode for delete topic flag
+  try {
+    zkUtils.createPersistentPath(ZkUtils.TopicDeletionEnabledPath, controller.config.deleteTopicEnable.toString)
+  } catch {
+    case _: ZkNodeExistsException =>
+  }
+
+
   def init(initialTopicsToBeDeleted: Set[TopicToBeDeleted], initialTopicsIneligibleForDeletion: Set[String]): Unit = {
+    isDeleteTopicEnabled = getDeleteTopicEnabled()
+
     if (isDeleteTopicEnabled) {
       initialTopicsToBeDeleted.foreach {topic => topicsToBeDeleted.put(topic.topicName, topic.deletionEnqueueTime)}
       partitionsToBeDeleted ++= topicsToBeDeleted.keySet.flatMap(controllerContext.partitionsForTopic)
       topicsIneligibleForDeletion ++= initialTopicsIneligibleForDeletion & topicsToBeDeleted.keySet
     } else {
       // if delete topic is disabled clean the topic entries under /admin/delete_topics
-      val zkUtils = controllerContext.zkUtils
       for (topic <- initialTopicsToBeDeleted) {
         val deleteTopicPath = getDeleteTopicPath(topic.topicName)
         info("Removing " + deleteTopicPath + " since delete topic is disabled")
@@ -375,6 +389,23 @@ class TopicDeletionManager(controller: KafkaController, eventManager: Controller
         info("Not retrying deletion of topic %s at this time since it is marked ineligible for deletion".format(topic))
       }
     }
+  }
+
+
+  private def getDeleteTopicEnabled(): Boolean = {
+    try {
+      val deleteTopicFlag = zkUtils.readData(ZkUtils.TopicDeletionEnabledPath)._1
+      if (deleteTopicFlag != "true" && deleteTopicFlag != "false")
+        isDeleteTopicEnabled
+      else deleteTopicFlag.toBoolean
+    } catch {
+      case _: ZkNoNodeException => controller.config.deleteTopicEnable
+    }
+  }
+
+  def resetDeleteTopicEnabled(): Unit = {
+    info("Reset isDeleteTopicEnabled flag to %s".format(controller.config.deleteTopicEnable))
+    isDeleteTopicEnabled = controller.config.deleteTopicEnable
   }
 }
 

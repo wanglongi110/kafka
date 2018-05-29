@@ -56,6 +56,7 @@ object ZkUtils {
   val LogDirEventNotificationPath = "/log_dir_event_notification"
   val KafkaAclPath = "/kafka-acl"
   val KafkaAclChangesPath = "/kafka-acl-changes"
+  val TopicDeletionEnabledPath = "/topic_deletion_flag"
 
   val ConsumersPath = "/consumers"
   val ClusterIdPath = s"$ClusterPath/id"

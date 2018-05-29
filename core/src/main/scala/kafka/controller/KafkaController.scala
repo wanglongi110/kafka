@@ -217,6 +217,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
   private val brokerChangeListener = new BrokerChangeListener(this, eventManager)
   private val topicChangeListener = new TopicChangeListener(this, eventManager)
   private val topicDeletionListener = new TopicDeletionListener(this, eventManager)
+  private val topicDeletionFlagListener = new TopicDeletionFlagListener(this, eventManager)
   private val partitionModificationsListeners: mutable.Map[String, PartitionModificationsListener] = mutable.Map.empty
   private val partitionReassignmentListener = new PartitionReassignmentListener(this, eventManager)
   private val preferredReplicaElectionListener = new PreferredReplicaElectionListener(this, eventManager)
@@ -311,6 +312,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     registerPreferredReplicaElectionListener()
     registerTopicChangeListener()
     registerTopicDeletionListener()
+    registerTopicDeletionFlagListener()
     registerBrokerChangeListener()
     registerLogDirEventNotificationListener()
 
@@ -376,6 +378,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     deregisterTopicChangeListener()
     partitionModificationsListeners.keys.foreach(deregisterPartitionModificationsListener)
     deregisterTopicDeletionListener()
+    deregisterTopicDeletionFlagListener()
     // shutdown replica state machine
     replicaStateMachine.shutdown()
     deregisterBrokerChangeListener()
@@ -983,6 +986,14 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
     zkUtils.unsubscribeChildChanges(DeleteTopicsPath, topicDeletionListener)
   }
 
+  private def registerTopicDeletionFlagListener() = {
+    zkUtils.subscribeDataChanges(TopicDeletionEnabledPath, topicDeletionFlagListener)
+  }
+
+  private def deregisterTopicDeletionFlagListener() = {
+    zkUtils.unsubscribeDataChanges(TopicDeletionEnabledPath, topicDeletionFlagListener)
+  }
+
   private def registerPartitionReassignmentListener() = {
     zkUtils.subscribeDataChanges(ZkUtils.ReassignPartitionsPath, partitionReassignmentListener)
   }
@@ -1373,7 +1384,7 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
           zkUtils.transactionalDeletePathRecursive(controllerContext.epochZkVersion, getDeleteTopicPath(topic)))
       }
       topicsToBeDeleted --= nonExistentTopics
-      if (config.deleteTopicEnable) {
+      if (topicDeletionManager.isDeleteTopicEnabled) {
         if (topicsToBeDeleted.nonEmpty) {
           info("Starting topic deletion for topics " + topicsToBeDeleted.mkString(","))
           // mark topic ineligible for deletion if other state changes are in progress
@@ -1392,6 +1403,29 @@ class KafkaController(val config: KafkaConfig, zkUtils: ZkUtils, time: Time, met
         for (topic <- topicsToBeDeleted) {
           info("Removing " + getDeleteTopicPath(topic) + " since delete topic is disabled")
           zkUtils.transactionalDeletePath(controllerContext.epochZkVersion, getDeleteTopicPath(topic))
+        }
+      }
+    }
+  }
+
+  case class TopicDeletionFlagChange(topicDeletionFlag: String, reset: Boolean = false) extends ControllerEvent {
+
+    def state = ControllerState.TopicDeletionFlagChange
+
+    override def process(): Unit = {
+      info("Process TopicDeletionFlagChange event")
+      if (!isActive) return
+      if (reset)
+        topicDeletionManager.resetDeleteTopicEnabled()
+      else {
+        if (topicDeletionFlag != "true" && topicDeletionFlag != "false") {
+          info(s"Overwrite ${ZkUtils.TopicDeletionEnabledPath} to ${topicDeletionManager.isDeleteTopicEnabled}")
+          zkUtils.transactionalUpdatePersistentPath(controllerContext.epochZkVersion,
+            ZkUtils.TopicDeletionEnabledPath, topicDeletionManager.isDeleteTopicEnabled.toString)
+        }
+        else {
+          info(s"Set isDeleteTopicEnabled flag to $topicDeletionFlag")
+          topicDeletionManager.isDeleteTopicEnabled = topicDeletionFlag.toBoolean
         }
       }
     }
@@ -1845,6 +1879,24 @@ class TopicDeletionListener(controller: KafkaController, eventManager: Controlle
   override def handleChildChange(parentPath: String, currentChilds: java.util.List[String]): Unit = {
     import JavaConverters._
     eventManager.put(controller.TopicDeletion(currentChilds.asScala.toSet))
+  }
+}
+
+/**
+  * Listener for /topic_deletion_flag znode.
+  *   If the data of the znode is set to true/false, it will trigger the in memory isDeleteTopicEnabled to be set accordingly.
+  *   If the znode data cannot be converted to boolean, it will overwrite znode with the previous valid value.
+  *   If the znode path is deleted, it will reset the in memory isDeleteTopicEnabled to the config value.
+  */
+class TopicDeletionFlagListener(controller: KafkaController, eventManager: ControllerEventManager) extends IZkDataListener with Logging {
+  override def handleDataDeleted(dataPath: String): Unit = {
+    info(s"$TopicDeletionEnabledPath is deleted. Put TopicDeletionFlagChange event into controller event queue")
+    eventManager.put(controller.TopicDeletionFlagChange(null, reset = true))
+  }
+
+  override def handleDataChange(dataPath: String, data: scala.Any): Unit = {
+    info(s"$TopicDeletionEnabledPath data changes to $data. Put TopicDeletionFlagChange event into controller event queue")
+    eventManager.put(controller.TopicDeletionFlagChange(data.toString))
   }
 }
 
