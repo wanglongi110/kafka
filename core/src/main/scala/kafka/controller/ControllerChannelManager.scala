@@ -38,7 +38,7 @@ import org.apache.kafka.common.{Node, TopicPartition}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.HashMap
-import scala.collection.{Set, mutable}
+import scala.collection.{Map, Set, mutable}
 
 
 object ControllerChannelManager {
@@ -51,7 +51,7 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
   protected val brokerStateInfo = new HashMap[Int, ControllerBrokerStateInfo]
   private val brokerLock = new Object
   this.logIdent = "[Channel manager on controller " + config.brokerId + "]: "
-
+  val brokerResponseSensors: mutable.Map[ApiKeys, BrokerResponseTimeStats] = mutable.HashMap.empty
   newGauge(
     "TotalQueueSize",
     new Gauge[Int] {
@@ -67,11 +67,26 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
     brokerLock synchronized {
       brokerStateInfo.foreach(brokerState => startRequestSendThread(brokerState._1))
     }
+    initBrokerResponseSensors()
   }
 
   def shutdown() = {
     brokerLock synchronized {
       brokerStateInfo.values.foreach(removeExistingBroker)
+    }
+    removeBrokerResponseSensors()
+  }
+
+  def initBrokerResponseSensors(): Unit = {
+    Array(ApiKeys.STOP_REPLICA, ApiKeys.LEADER_AND_ISR, ApiKeys.UPDATE_METADATA_KEY).foreach { k: ApiKeys =>
+      brokerResponseSensors.put(k, new BrokerResponseTimeStats(k))
+    }
+  }
+
+  def removeBrokerResponseSensors(): Unit = {
+    brokerResponseSensors.keySet.foreach { k: ApiKeys =>
+      brokerResponseSensors(k).removeMetrics()
+      brokerResponseSensors.remove(k)
     }
   }
 
@@ -81,7 +96,7 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
       val stateInfoOpt = brokerStateInfo.get(brokerId)
       stateInfoOpt match {
         case Some(stateInfo) =>
-          stateInfo.messageQueue.put(QueueItem(apiKey, request, callback))
+          stateInfo.messageQueue.put(QueueItem(apiKey, request, callback, time.milliseconds()))
         case None =>
           warn("Not sending request %s to broker %d, since it is offline.".format(request, brokerId))
       }
@@ -189,7 +204,7 @@ class ControllerChannelManager(controllerContext: ControllerContext, config: Kaf
 }
 
 case class QueueItem(apiKey: ApiKeys, request: AbstractRequest.Builder[_ <: AbstractRequest],
-                     callback: AbstractResponse => Unit)
+                     callback: AbstractResponse => Unit, enqueueTimeMs: Long)
 
 class RequestSendThread(val controllerId: Int,
                         val controllerContext: ControllerContext,
@@ -208,7 +223,9 @@ class RequestSendThread(val controllerId: Int,
 
     def backoff(): Unit = CoreUtils.swallowTrace(Thread.sleep(100))
 
-    val QueueItem(apiKey, requestBuilder, callback) = queue.take()
+    val QueueItem(apiKey, requestBuilder, callback, enqueueTimeMs) = queue.take()
+    var queueTimeMs = time.milliseconds() - enqueueTimeMs
+    var remoteTimeMs: Long = 0
     var clientResponse: ClientResponse = null
     try {
       var isSendSuccessful = false
@@ -225,6 +242,7 @@ class RequestSendThread(val controllerId: Int,
               time.milliseconds(), true)
             clientResponse = NetworkClientUtils.sendAndReceive(networkClient, clientRequest, time)
             isSendSuccessful = true
+            remoteTimeMs = time.milliseconds() - enqueueTimeMs - queueTimeMs
           }
         } catch {
           case e: Throwable => // if the send was not successful, reconnect to broker and resend the message
@@ -250,6 +268,7 @@ class RequestSendThread(val controllerId: Int,
         if (callback != null) {
           callback(response)
         }
+        controllerContext.controllerChannelManager.brokerResponseSensors(api).update(queueTimeMs, remoteTimeMs)
       }
     } catch {
       case e: Throwable =>
@@ -516,5 +535,24 @@ object Callbacks {
     }
 
     def build: Callbacks = new Callbacks(stopReplicaResponseCbk)
+  }
+}
+
+class BrokerResponseTimeStats(val key: ApiKeys) extends KafkaMetricsGroup {
+  // Records time for request waits on local send thread queue
+  val brokerRequestQueueTime = newHistogram("brokerRequestQueueTimeMs", true, responseTimeTags)
+  // Records time for controller to send request and receive response
+  val brokerRequestRemoteTime = newHistogram("brokerRequestRemoteTimeMs", true, responseTimeTags)
+
+  def responseTimeTags = Map("request" -> key.toString)
+
+  def update(queueTime: Long, remoteTime: Long): Unit = {
+    brokerRequestQueueTime.update(queueTime)
+    brokerRequestRemoteTime.update(remoteTime)
+  }
+
+  def removeMetrics(): Unit = {
+    removeMetric("brokerRequestQueueTimeMs", responseTimeTags)
+    removeMetric("brokerRequestRemoteTimeMs", responseTimeTags)
   }
 }
