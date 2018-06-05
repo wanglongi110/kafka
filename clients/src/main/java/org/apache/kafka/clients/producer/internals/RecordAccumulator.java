@@ -586,10 +586,11 @@ public final class RecordAccumulator {
         try {
             Long expireMs = System.currentTimeMillis() + timeoutMs;
             for (ProducerBatch batch : this.incomplete.copyAll()) {
-                if (System.currentTimeMillis() > expireMs) {
+                Long currentMs = System.currentTimeMillis();
+                if (currentMs > expireMs) {
                     throw new TimeoutException("Failed to flush accumulated records within" + timeoutMs + "milliseconds.");
                 }
-                boolean completed = batch.produceFuture.await(Math.max(expireMs - System.currentTimeMillis(), 0), TimeUnit.MILLISECONDS);
+                boolean completed = batch.produceFuture.await(Math.max(expireMs - currentMs, 0), TimeUnit.MILLISECONDS);
                 if (!completed) {
                     throw new TimeoutException("Failed to flush accumulated records within" + timeoutMs + "milliseconds.");
                 }
