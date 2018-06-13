@@ -177,7 +177,7 @@ class ReplicaFetcherThread(name: String,
     // traffic doesn't exceed quota.
     if (quota.isThrottled(topicPartition))
       quota.record(records.sizeInBytes)
-    replicaMgr.brokerTopicStats.updateReplicationBytesIn(records.sizeInBytes)
+    replicaMgr.brokerTopicStats.updateReplicationBytesIn(topicPartition.topic(), records.sizeInBytes)
 
     logAppendInfo
   }
