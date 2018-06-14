@@ -362,7 +362,7 @@ class LogValidatorTest {
       magic = magic,
       compactedTopic = false,
       timestampType = TimestampType.CREATE_TIME,
-      timestampDiffMaxMs = 1000L,
+      timestampDiffMaxMs = 10000L,
       partitionLeaderEpoch = partitionLeaderEpoch,
       isFromClient = true)
     val validatedRecords = validatedResults.validatedRecords

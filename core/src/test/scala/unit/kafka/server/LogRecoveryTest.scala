@@ -143,6 +143,12 @@ class LogRecoveryTest extends ZooKeeperTestHarness {
       leader == 0 || leader == 1)
 
     assertEquals(hw, hwFile1.read.getOrElse(topicPartition, 0L))
+    /** wait until server1 has caught up and joined the ISR before shutting down server1
+      * to ensure the leadership can be transferred to server1 after server2 is shutdown
+      */
+    waitUntilTrue(() => server2.replicaManager.getPartition(topicPartition).get.inSyncReplicas.size == 2,
+      "Server 1 is not able to join the ISR after restart")
+
     // since server 2 was never shut down, the hw value of 30 is probably not checkpointed to disk yet
     server2.shutdown()
     assertEquals(hw, hwFile2.read.getOrElse(topicPartition, 0L))
