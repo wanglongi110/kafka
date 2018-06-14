@@ -264,7 +264,7 @@ class ReplicaFetcherThread(name: String,
   override def maybeTruncate(fetchedEpochs: Map[TopicPartition, EpochEndOffset]): Map[TopicPartition, Long] = {
     val truncationPoints = scala.collection.mutable.HashMap.empty[TopicPartition, Long]
     val partitionsWithError = mutable.Set[TopicPartition]()
-
+    var truncated = false
     fetchedEpochs.foreach { case (tp, epochOffset) =>
       try {
         val replica = replicaMgr.getReplicaOrException(tp)
@@ -281,7 +281,8 @@ class ReplicaFetcherThread(name: String,
             else
               epochOffset.endOffset
 
-          replicaMgr.logManager.truncateTo(Map(tp -> truncationOffset), writeCheckpoint = false)
+          if (replicaMgr.logManager.truncateTo(Map(tp -> truncationOffset), writeCheckpoint = false))
+            truncated = true
           truncationPoints.put(tp, truncationOffset)
         }
       } catch {
@@ -291,7 +292,7 @@ class ReplicaFetcherThread(name: String,
       }
     }
 
-    if (truncationPoints.nonEmpty)
+    if (truncated)
       replicaMgr.logManager.checkpointLogRecoveryOffsets()
 
     // For partitions that encountered an error, delay them a bit before retrying the leader epoch request
