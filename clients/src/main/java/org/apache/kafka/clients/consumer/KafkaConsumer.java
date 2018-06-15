@@ -1002,15 +1002,24 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             if (partitions == null) {
                 throw new IllegalArgumentException("Topic partition collection to assign to cannot be null");
             } else if (partitions.isEmpty()) {
+                fetcher.clearBufferedData();
                 this.unsubscribe();
             } else {
                 Set<String> topics = new HashSet<>();
+                Set<TopicPartition> topicPartitionsToClearBufferFor = new HashSet<>();
+                Set<TopicPartition> currentSubscriptions = subscriptions.assignedPartitions();
                 for (TopicPartition tp : partitions) {
                     String topic = (tp != null) ? tp.topic() : null;
                     if (topic == null || topic.trim().isEmpty())
                         throw new IllegalArgumentException("Topic partitions to assign to cannot have null or empty topic");
                     topics.add(topic);
                 }
+                for (TopicPartition tp : currentSubscriptions) {
+                  if (!partitions.contains(tp)) {
+                   topicPartitionsToClearBufferFor.add(tp);
+                  }
+                }
+                fetcher.clearBufferedDataForTopicPartitions(topicPartitionsToClearBufferFor);
 
                 // make sure the offsets of topic partitions the consumer is unsubscribing from
                 // are committed since there will be no following rebalance

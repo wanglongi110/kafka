@@ -1054,6 +1054,32 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
         clearBufferedDataForPausedPartitions();
     }
 
+    /**
+     * Hotfix : clear the buffered data (completed fetches) for all topics
+     */
+    public void clearBufferedData() {
+        completedFetches.clear();
+        clearBufferedDataForPausedPartitions();
+    }
+
+    /**
+     * Hotfix : clear the buffered data (completed fetches)  for  a set of {@link TopicPartition}
+     */
+    public void clearBufferedDataForTopicPartitions(Set<TopicPartition> topicPartitions) {
+        if (topicPartitions != null && !topicPartitions.isEmpty()) {
+            Iterator<CompletedFetch> itr = completedFetches.iterator();
+            while (itr.hasNext()) {
+                TopicPartition tp = itr.next().partition;
+                if (topicPartitions.contains(tp)) {
+                    itr.remove();
+                }
+                pausedCompletedFetchesPerTopicPartition.remove(tp);
+                pausedNextInLineRecordsPerTopicPartition.remove(tp);
+                recentlyUnPausedTopicPartitions.remove(tp);
+            }
+        }
+    }
+
     public static Sensor throttleTimeSensor(Metrics metrics, FetcherMetricsRegistry metricsRegistry) {
         Sensor fetchThrottleTimeSensor = metrics.sensor("fetch-throttle-time");
         fetchThrottleTimeSensor.add(metrics.metricInstance(metricsRegistry.fetchThrottleTimeAvg), new Avg());
