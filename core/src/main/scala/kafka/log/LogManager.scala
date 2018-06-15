@@ -454,7 +454,10 @@ class LogManager(logDirs: Array[File],
     def needToThrottle: Boolean = {
       val requestQueueSizeMetric = Metrics.defaultRegistry().allMetrics().get(
         new MetricName("kafka.network", "RequestChannel", "RequestQueueSize", null, "kafka.network:type=RequestChannel,name=RequestQueueSize")).asInstanceOf[Gauge[Int]]
-      requestQueueSizeMetric.value() > minRequestQueueSizeToEnableSanityCheckQuota
+      if (requestQueueSizeMetric == null)
+        false
+      else
+        requestQueueSizeMetric.value() > minRequestQueueSizeToEnableSanityCheckQuota
     }
 
     var id = 0
