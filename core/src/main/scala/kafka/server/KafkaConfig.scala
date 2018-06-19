@@ -790,7 +790,7 @@ object KafkaConfig {
       .define(NumRecoveryThreadsPerDataDirProp, INT, Defaults.NumRecoveryThreadsPerDataDir, atLeast(1), HIGH, NumRecoveryThreadsPerDataDirDoc)
       .define(NumSanityCheckThreadsPerDataDirProp, INT, Defaults.NumSanityCheckThreadsPerDataDir, atLeast(0), HIGH, NumSanityCheckThreadsPerDataDirDoc)
       .define(SanityCheckQuotaSegmentPerSecPerDataDirProp, INT, Defaults.SanityCheckQuotaSegmentPerSecPerDataDir, atLeast(1), HIGH, SanityCheckQuotaSegmentPerSecPerDataDirDoc)
-      .define(MinRequestQueueSizeToEnableSanityCheckQuotaProp, INT, Defaults.MinRequestQueueSizeToEnableSanityCheckQuota, atLeast(5), HIGH, MinRequestQueueSizeToEnableSanityCheckQuotaDoc)
+      .define(MinRequestQueueSizeToEnableSanityCheckQuotaProp, INT, Defaults.MinRequestQueueSizeToEnableSanityCheckQuota, atLeast(0), HIGH, MinRequestQueueSizeToEnableSanityCheckQuotaDoc)
       .define(AutoCreateTopicsEnableProp, BOOLEAN, Defaults.AutoCreateTopicsEnable, HIGH, AutoCreateTopicsEnableDoc)
       .define(MinInSyncReplicasProp, INT, Defaults.MinInSyncReplicas, atLeast(1), HIGH, MinInSyncReplicasDoc)
       .define(LogMessageFormatVersionProp, STRING, Defaults.LogMessageFormatVersion, MEDIUM, LogMessageFormatVersionDoc)

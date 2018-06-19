@@ -452,12 +452,16 @@ class LogManager(logDirs: Array[File],
       return
 
     def needToThrottle: Boolean = {
-      val requestQueueSizeMetric = Metrics.defaultRegistry().allMetrics().get(
+      val metrics = Metrics.defaultRegistry().allMetrics()
+      val requestQueueSizeMetric = metrics.get(
         new MetricName("kafka.network", "RequestChannel", "RequestQueueSize", null, "kafka.network:type=RequestChannel,name=RequestQueueSize")).asInstanceOf[Gauge[Int]]
-      if (requestQueueSizeMetric == null)
-        false
+      val leaderPartitionCountMetric = metrics.get(
+        new MetricName("kafka.server", "ReplicaManager", "LeaderCount", null, "kafka.server:type=ReplicaManager,name=LeaderCount")).asInstanceOf[Gauge[Int]]
+      if (requestQueueSizeMetric == null || leaderPartitionCountMetric == null)
+        true
       else
-        requestQueueSizeMetric.value() > minRequestQueueSizeToEnableSanityCheckQuota
+        //throttle sanity check when there is no leader partition in this broker or the request queue size is larger than a threshold.
+        requestQueueSizeMetric.value() >= minRequestQueueSizeToEnableSanityCheckQuota || leaderPartitionCountMetric.value() == 0
     }
 
     var id = 0
