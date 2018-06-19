@@ -69,6 +69,9 @@ class GroupCoordinator(val brokerId: Int,
     props.put(LogConfig.CleanupPolicyProp, LogConfig.Compact)
     props.put(LogConfig.SegmentBytesProp, offsetConfig.offsetsTopicSegmentBytes.toString)
     props.put(LogConfig.CompressionTypeProp, ProducerCompressionCodec.name)
+    props.put(LogConfig.MaxMessageBytesProp, offsetConfig.offsetsTopicMaxMessageBytes.toString)
+    props.put(LogConfig.MinInSyncReplicasProp, offsetConfig.offsetsTopicMinInSyncReplicas.toString)
+    props.put(LogConfig.MinCompactionLagMsProp, offsetConfig.offsetsTopicMinCompactionLagMs.toString)
     props
   }
 
@@ -1054,7 +1057,11 @@ object GroupCoordinator {
     offsetsTopicReplicationFactor = config.offsetsTopicReplicationFactor,
     offsetsTopicCompressionCodec = config.offsetsTopicCompressionCodec,
     offsetCommitTimeoutMs = config.offsetCommitTimeoutMs,
-    offsetCommitRequiredAcks = config.offsetCommitRequiredAcks
+    offsetCommitRequiredAcks = config.offsetCommitRequiredAcks,
+    offsetsTopicMaxMessageBytes = config.offsetsTopicMaxMessageBytes,
+    offsetsTopicMinInSyncReplicas = config.offsetsTopicMinInSyncReplicas,
+    offsetsTopicMinCompactionLagMs = config.offsetsTopicMinCompactionLagMs
+
   )
 
   def apply(config: KafkaConfig,
