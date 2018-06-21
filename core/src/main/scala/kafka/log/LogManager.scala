@@ -20,6 +20,7 @@ package kafka.log
 import java.io._
 import java.nio.file.Files
 import java.util
+import java.util.Comparator
 import java.util.concurrent._
 
 import com.yammer.metrics.Metrics
@@ -34,6 +35,7 @@ import kafka.utils._
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.{KafkaThread, Time}
 import org.apache.kafka.common.errors.{KafkaStorageException, LogDirNotFoundException}
+import org.apache.kafka.common.internals.Topic
 
 import scala.collection.JavaConverters._
 import scala.collection._
@@ -84,7 +86,7 @@ class LogManager(logDirs: Array[File],
   private val _liveLogDirs: ConcurrentLinkedQueue[File] = createAndValidateLogDirs(logDirs, initialOfflineDirs)
 
   private val threadsForSanityCheck = mutable.ListBuffer.empty[KafkaThread]
-  private val partitionsForSanityCheck = mutable.Map.empty[String, LinkedBlockingQueue[TopicPartition]]
+  private val partitionsForSanityCheck = mutable.Map.empty[String, PriorityBlockingQueue[PartitionForSanityCheck]]
 
   def liveLogDirs: Array[File] = {
     if (_liveLogDirs.size == logDirs.size)
@@ -274,8 +276,10 @@ class LogManager(logDirs: Array[File],
 
     if (sanityCheckLogsOnStartupEnabled)
       current.sanityCheckSegments()
-    else
-      partitionsForSanityCheck(logDir.getParent).put(topicPartition)
+    else {
+      val sanityCheckPriority = if (Topic.isInternal(topicPartition.topic())) 0 else if (config.compact) 1 else 2
+      partitionsForSanityCheck(logDir.getParent).put(PartitionForSanityCheck(topicPartition, sanityCheckPriority))
+    }
 
     if (logDir.getName.endsWith(Log.DeleteDirSuffix)) {
       addLogToBeDeleted(current)
@@ -300,7 +304,7 @@ class LogManager(logDirs: Array[File],
     val jobs = mutable.Map.empty[File, Seq[Future[_]]]
 
     for (dir <- liveLogDirs) {
-      partitionsForSanityCheck.put(dir.getAbsolutePath, new LinkedBlockingQueue[TopicPartition]())
+      partitionsForSanityCheck.put(dir.getAbsolutePath, new PriorityBlockingQueue[PartitionForSanityCheck]())
       try {
         val pool = Executors.newFixedThreadPool(ioThreads)
         threadPools.append(pool)
@@ -422,11 +426,12 @@ class LogManager(logDirs: Array[File],
   }
 
 
-  private def sanityCheckLog(partitions: LinkedBlockingQueue[TopicPartition], dir: String, throttler: Throttler) {
+  private def sanityCheckLog(partitions: PriorityBlockingQueue[PartitionForSanityCheck], dir: String, throttler: Throttler) {
     while (true) {
-      val tp = partitions.poll()
-      if (tp == null)
+      val partition = partitions.poll()
+      if (partition == null)
         return
+      val tp = partition.topicPartition
       val log = logs.get(tp)
       if (log != null) {
         val startMs = time.milliseconds
@@ -933,4 +938,9 @@ object LogManager {
       sanityCheckLogsOnStartupEnabled = config.sanityCheckLogsOnStartupEnabled
     )
   }
+}
+
+case class PartitionForSanityCheck(topicPartition: TopicPartition, sanityCheckPriority: Int)
+  extends Comparable[PartitionForSanityCheck] {
+  override def compareTo(o: PartitionForSanityCheck): Int = sanityCheckPriority - o.sanityCheckPriority
 }
