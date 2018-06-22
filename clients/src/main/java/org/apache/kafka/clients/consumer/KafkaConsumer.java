@@ -1015,9 +1015,9 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
                     topics.add(topic);
                 }
                 for (TopicPartition tp : currentSubscriptions) {
-                  if (!partitions.contains(tp)) {
-                   topicPartitionsToClearBufferFor.add(tp);
-                  }
+                    if (!partitions.contains(tp)) {
+                        topicPartitionsToClearBufferFor.add(tp);
+                    }
                 }
                 fetcher.clearBufferedDataForTopicPartitions(topicPartitionsToClearBufferFor);
 
