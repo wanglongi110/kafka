@@ -356,7 +356,7 @@ class Log(@volatile var dir: File,
   }
 
   // Sanity check all segments of this log
-  def sanityCheckSegments(throttler: Option[Throttler] = None): Unit = {
+  def sanityCheckSegments(throttler: Option[CountBasedThrottler] = None): Unit = {
     segments.keySet().asScala.foreach(baseOffset => {
       val segment = segments.get(baseOffset)
       if (segment != null)
@@ -386,7 +386,7 @@ class Log(@volatile var dir: File,
   }
 
   // Sanity check the given segment
-  private def sanityCheckSegment(segment: LogSegment, throttler: Option[Throttler] = None) {
+  private def sanityCheckSegment(segment: LogSegment, throttler: Option[CountBasedThrottler] = None) {
     if (segment.sanityChecked)
       return
 

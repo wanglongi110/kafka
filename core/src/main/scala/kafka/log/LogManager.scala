@@ -426,7 +426,7 @@ class LogManager(logDirs: Array[File],
   }
 
 
-  private def sanityCheckLog(partitions: PriorityBlockingQueue[PartitionForSanityCheck], dir: String, throttler: Throttler) {
+  private def sanityCheckLog(partitions: PriorityBlockingQueue[PartitionForSanityCheck], dir: String, throttler: CountBasedThrottler) {
     while (true) {
       val partition = partitions.poll()
       if (partition == null)
@@ -472,9 +472,9 @@ class LogManager(logDirs: Array[File],
     var id = 0
     for (dir <- liveLogDirs) {
       val partitionsForSanityCheckPerDir = partitionsForSanityCheck(dir.getAbsolutePath)
-      val sanityCheckThrottler = new Throttler(
+      val sanityCheckThrottler = new CountBasedThrottler(
         desiredRatePerSec = sanityCheckQuotaSegmentPerSecPerDataDir,
-        checkIntervalMs = 100,
+        checkIntervalNum = sanityCheckQuotaSegmentPerSecPerDataDir,
         throttleDown = true,
         metricName = s"sanity-check-per-sec",
         units = "entries",

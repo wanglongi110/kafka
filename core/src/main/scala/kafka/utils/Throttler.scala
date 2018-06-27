@@ -34,8 +34,6 @@ import scala.math._
  * @param checkIntervalMs: The interval at which to check our rate
  * @param throttleDown: Does throttling increase or decrease our rate?
  * @param time: The time implementation to use
- * @param needThrottle: a boolean function to decide whether to throttle the rate in runtime
- * @param tags: tags for the rate metrics
  */
 @threadsafe
 class Throttler(desiredRatePerSec: Double,
@@ -43,12 +41,10 @@ class Throttler(desiredRatePerSec: Double,
                 throttleDown: Boolean = true,
                 metricName: String = "throttler",
                 units: String = "entries",
-                time: Time = Time.SYSTEM,
-                needThrottle: () => Boolean = () => true,
-                tags: Map[String, String] = Map.empty) extends Logging with KafkaMetricsGroup {
+                time: Time = Time.SYSTEM) extends Logging with KafkaMetricsGroup {
 
   private val lock = new Object
-  private val meter = newMeter(metricName, units, TimeUnit.SECONDS, tags)
+  private val meter = newMeter(metricName, units, TimeUnit.SECONDS)
   private val checkIntervalNs = TimeUnit.MILLISECONDS.toNanos(checkIntervalMs)
   private var periodStartNs: Long = time.nanoseconds
   private var observedSoFar: Double = 0.0
@@ -66,7 +62,7 @@ class Throttler(desiredRatePerSec: Double,
       // we should take a little nap
       if (elapsedNs > checkIntervalNs && observedSoFar > 0) {
         val rateInSecs = (observedSoFar * nsPerSec) / elapsedNs
-        val needAdjustment = !(throttleDown ^ (rateInSecs > desiredRatePerSec)) && needThrottle()
+        val needAdjustment = !(throttleDown ^ (rateInSecs > desiredRatePerSec))
         if (needAdjustment) {
           // solve for the amount of time to sleep to make us hit the desired rate
           val desiredRateMs = desiredRatePerSec / msPerSec.toDouble
