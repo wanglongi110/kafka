@@ -50,11 +50,13 @@ import scala.collection.{Seq, Set, mutable}
 
 object LogAppendInfo {
   val UnknownLogAppendInfo = LogAppendInfo(None, -1, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, -1L,
-    RecordConversionStats.EMPTY, NoCompressionCodec, NoCompressionCodec, -1, -1, offsetsMonotonic = false, -1L)
+    RecordConversionStats.EMPTY, NoCompressionCodec, NoCompressionCodec, -1, -1, offsetsMonotonic = false, -1L,
+    recompressedBatchCount = 0)
 
   def unknownLogAppendInfoWithLogStartOffset(logStartOffset: Long): LogAppendInfo =
     LogAppendInfo(None, -1, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP, logStartOffset,
-      RecordConversionStats.EMPTY, NoCompressionCodec, NoCompressionCodec, -1, -1, offsetsMonotonic = false, -1L)
+      RecordConversionStats.EMPTY, NoCompressionCodec, NoCompressionCodec, -1, -1, offsetsMonotonic = false, -1L,
+      recompressedBatchCount = 0)
 }
 
 /**
@@ -87,7 +89,8 @@ case class LogAppendInfo(var firstOffset: Option[Long],
                          shallowCount: Int,
                          validBytes: Int,
                          offsetsMonotonic: Boolean,
-                         lastOffsetOfFirstBatch: Long) {
+                         lastOffsetOfFirstBatch: Long,
+                         var recompressedBatchCount: Long) {
   /**
    * Get the first offset if it exists, else get the last offset of the first batch
    * For magic versions 2 and newer, this method will return first offset. For magic versions
@@ -900,7 +903,8 @@ class Log(@volatile var dir: File,
             info1.shallowCount + info2.shallowCount,
             info1.validBytes + info2.validBytes,
             info1.offsetsMonotonic && info2.offsetsMonotonic,
-            info1.lastOffsetOfFirstBatch
+            info1.lastOffsetOfFirstBatch,
+            info1.recompressedBatchCount + info2.recompressedBatchCount
           )
         })
 
@@ -973,6 +977,10 @@ class Log(@volatile var dir: File,
       appendInfo.offsetOfMaxTimestamp = validateAndOffsetAssignResult.shallowOffsetOfMaxTimestamp
       appendInfo.lastOffset = offset.value - 1
       appendInfo.recordConversionStats = validateAndOffsetAssignResult.recordConversionStats
+
+      // update stats for compressed/decompressed batch count
+      if (validateAndOffsetAssignResult.recompressApplied)
+        appendInfo.recompressedBatchCount = 1
       if (config.messageTimestampType == TimestampType.LOG_APPEND_TIME)
         appendInfo.logAppendTime = logAppendTime
 
@@ -1262,7 +1270,8 @@ class Log(@volatile var dir: File,
     // Apply broker-side compression if any
     val targetCodec = BrokerCompressionCodec.getTargetCompressionCodec(config.compressionType, sourceCodec)
     LogAppendInfo(firstOffset, lastOffset, maxTimestamp, offsetOfMaxTimestamp, RecordBatch.NO_TIMESTAMP, logStartOffset,
-      RecordConversionStats.EMPTY, sourceCodec, targetCodec, shallowMessageCount, validBytesCount, monotonic, lastOffsetOfFirstBatch)
+      RecordConversionStats.EMPTY, sourceCodec, targetCodec, shallowMessageCount, validBytesCount, monotonic,
+      lastOffsetOfFirstBatch, 0)
   }
 
   private def updateProducers(batch: RecordBatch,
