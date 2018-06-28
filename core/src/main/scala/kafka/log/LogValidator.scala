@@ -142,7 +142,8 @@ private[kafka] object LogValidator extends Logging {
       validatedRecords = convertedRecords,
       maxTimestamp = info.maxTimestamp,
       shallowOffsetOfMaxTimestamp = info.shallowOffsetOfMaxTimestamp,
-      messageSizeMaybeChanged = true)
+      messageSizeMaybeChanged = true,
+      recompressApplied = false)
   }
 
   private def assignOffsetsNonCompressed(records: MemoryRecords,
@@ -203,7 +204,8 @@ private[kafka] object LogValidator extends Logging {
       validatedRecords = records,
       maxTimestamp = maxTimestamp,
       shallowOffsetOfMaxTimestamp = offsetOfMaxTimestamp,
-      messageSizeMaybeChanged = false)
+      messageSizeMaybeChanged = false,
+      recompressApplied = false)
   }
 
   /**
@@ -290,7 +292,8 @@ private[kafka] object LogValidator extends Logging {
         ValidationAndOffsetAssignResult(validatedRecords = records,
           maxTimestamp = maxTimestamp,
           shallowOffsetOfMaxTimestamp = lastOffset,
-          messageSizeMaybeChanged = false)
+          messageSizeMaybeChanged = false,
+          recompressApplied = false)
       }
   }
 
@@ -322,7 +325,8 @@ private[kafka] object LogValidator extends Logging {
       validatedRecords = records,
       maxTimestamp = info.maxTimestamp,
       shallowOffsetOfMaxTimestamp = info.shallowOffsetOfMaxTimestamp,
-      messageSizeMaybeChanged = true)
+      messageSizeMaybeChanged = true,
+      recompressApplied = true)
   }
 
   private def validateKey(record: Record, compactedTopic: Boolean) {
@@ -352,6 +356,7 @@ private[kafka] object LogValidator extends Logging {
   case class ValidationAndOffsetAssignResult(validatedRecords: MemoryRecords,
                                              maxTimestamp: Long,
                                              shallowOffsetOfMaxTimestamp: Long,
-                                             messageSizeMaybeChanged: Boolean)
+                                             messageSizeMaybeChanged: Boolean,
+                                             recompressApplied: Boolean)
 
 }

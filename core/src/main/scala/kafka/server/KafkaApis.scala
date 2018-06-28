@@ -508,6 +508,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
         downConvertMagic.map { magic =>
           trace(s"Down converting records from partition $tp to message format version $magic for fetch request from $clientId")
+          replicaManager.incrementRecompressionCount()
           val converted = data.records.downConvert(magic, fetchRequest.fetchData.get(tp).fetchOffset)
           new FetchResponse.PartitionData(data.error, data.highWatermark, FetchResponse.INVALID_LAST_STABLE_OFFSET,
             data.logStartOffset, data.abortedTransactions, converted)

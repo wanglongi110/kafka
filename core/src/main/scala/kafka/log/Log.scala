@@ -48,7 +48,7 @@ import java.util.regex.Pattern
 
 object LogAppendInfo {
   val UnknownLogAppendInfo = LogAppendInfo(-1, -1, RecordBatch.NO_TIMESTAMP, -1L, RecordBatch.NO_TIMESTAMP,
-    NoCompressionCodec, NoCompressionCodec, -1, -1, offsetsMonotonic = false)
+    NoCompressionCodec, NoCompressionCodec, -1, -1, offsetsMonotonic = false, recompressedBatchCount = 0)
 }
 
 /**
@@ -75,7 +75,8 @@ case class LogAppendInfo(var firstOffset: Long,
                          targetCodec: CompressionCodec,
                          shallowCount: Int,
                          validBytes: Int,
-                         offsetsMonotonic: Boolean)
+                         offsetsMonotonic: Boolean,
+                         var recompressedBatchCount: Long)
 
 /**
  * A class used to hold useful metadata about a completed transaction. This is used to build
@@ -728,7 +729,8 @@ class Log(@volatile var dir: File,
             info1.targetCodec,
             info1.shallowCount + info2.shallowCount,
             info1.validBytes + info2.validBytes,
-            info1.offsetsMonotonic && info2.offsetsMonotonic
+            info1.offsetsMonotonic && info2.offsetsMonotonic,
+            info1.recompressedBatchCount + info2.recompressedBatchCount
           )
         })
 
@@ -790,6 +792,10 @@ class Log(@volatile var dir: File,
       appendInfo.maxTimestamp = validateAndOffsetAssignResult.maxTimestamp
       appendInfo.offsetOfMaxTimestamp = validateAndOffsetAssignResult.shallowOffsetOfMaxTimestamp
       appendInfo.lastOffset = offset.value - 1
+
+      // update stats for compressed/decompressed batch count
+      if (validateAndOffsetAssignResult.recompressApplied)
+        appendInfo.recompressedBatchCount = 1
       if (config.messageTimestampType == TimestampType.LOG_APPEND_TIME)
         appendInfo.logAppendTime = logAppendTime
 
@@ -1030,7 +1036,7 @@ class Log(@volatile var dir: File,
     // Apply broker-side compression if any
     val targetCodec = BrokerCompressionCodec.getTargetCompressionCodec(config.compressionType, sourceCodec)
     LogAppendInfo(firstOffset, lastOffset, maxTimestamp, offsetOfMaxTimestamp, RecordBatch.NO_TIMESTAMP, sourceCodec,
-      targetCodec, shallowMessageCount, validBytesCount, monotonic)
+      targetCodec, shallowMessageCount, validBytesCount, monotonic, 0)
   }
 
   private def updateProducers(batch: RecordBatch,
