@@ -222,6 +222,7 @@ class IsrExpirationTest {
     EasyMock.expect(log.dir).andReturn(TestUtils.tempDir()).anyTimes()
     EasyMock.expect(log.leaderEpochCache).andReturn(cache).anyTimes()
     EasyMock.expect(log.onHighWatermarkIncremented(0L))
+    EasyMock.expect(log.logEndOffsetMetadata).andReturn(LogOffsetMetadata(Long.MaxValue)).anyTimes()
     EasyMock.replay(log)
     log
   }
