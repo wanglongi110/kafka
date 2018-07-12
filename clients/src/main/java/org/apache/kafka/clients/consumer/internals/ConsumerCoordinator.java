@@ -298,8 +298,15 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                 // due to a race condition between the initial metadata fetch and the initial rebalance,
                 // we need to ensure that the metadata is fresh before joining initially. This ensures
                 // that we have matched the pattern against the cluster's topics at least once before joining.
-                if (subscriptions.hasPatternSubscription())
+                if (subscriptions.hasPatternSubscription()) {
+                    // Force metadata refresh, as long as the refresh backoff time has passed. This is to avoid a
+                    // situation where this consumer's metadata refresh happens after the current rebalance is done and
+                    // causes another round of rebalance.
+                    if (this.metadata.timeToAllowUpdate(time.milliseconds()) == 0) {
+                        this.metadata.requestUpdate();
+                    }
                     client.ensureFreshMetadata();
+                }
 
                 ensureActiveGroup();
                 now = time.milliseconds();
