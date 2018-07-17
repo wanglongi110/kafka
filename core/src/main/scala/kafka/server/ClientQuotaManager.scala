@@ -192,8 +192,9 @@ class ClientQuotaManager(private val config: ClientQuotaManagerConfig,
     metricsMap.foreach {
       case (metricName: MetricName, kafkaMetric: KafkaMetric) =>
         if (metricName.group().equals(quotaType.toString) &&
-          (metricName.name().equals("byte-rate") || metricName.name().equals("throttle-time")) &&
-          metricName.tags().containsKey("client-id")) {
+          (metricName.name().equals("byte-rate") || metricName.name().equals("throttle-time") ||
+            metricName.name().equals("request-time")) &&
+          (metricName.tags().containsKey("client-id") || metricName.tags().containsKey("user"))) {
           logger.info("Metric name (" + metricName + ") has value (" + kafkaMetric.value() + ")")
         }
     }
