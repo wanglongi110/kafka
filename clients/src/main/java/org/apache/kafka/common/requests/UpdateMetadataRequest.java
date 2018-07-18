@@ -185,6 +185,9 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
         private final Map<TopicPartition, PartitionState> partitionStates;
         private final Set<Broker> liveBrokers;
 
+        // LIKAFKA-18349 - Cache the UpdateMetadataRequest Objects to reduce memory usage
+        private final Map<Short, UpdateMetadataRequest> requestCache = new HashMap<>();
+
         public Builder(short version, int controllerId, int controllerEpoch, long brokerEpoch,
                        Map<TopicPartition, PartitionState> partitionStates, Set<Broker> liveBrokers) {
             super(ApiKeys.UPDATE_METADATA, version, controllerId, controllerEpoch, brokerEpoch);
@@ -194,14 +197,20 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
 
         @Override
         public UpdateMetadataRequest build(short version) {
-            if (version == 0) {
-                for (Broker broker : liveBrokers) {
-                    if (broker.endPoints.size() != 1 || broker.endPoints.get(0).securityProtocol != SecurityProtocol.PLAINTEXT) {
-                        throw new UnsupportedVersionException("UpdateMetadataRequest v0 only handles PLAINTEXT endpoints");
+            UpdateMetadataRequest updateMetadataRequest = requestCache.get(version);
+            if (updateMetadataRequest == null) {
+                if (version == 0) {
+                    for (Broker broker : liveBrokers) {
+                        if (broker.endPoints.size() != 1 || broker.endPoints.get(0).securityProtocol != SecurityProtocol.PLAINTEXT) {
+                            throw new UnsupportedVersionException(
+                                "UpdateMetadataRequest v0 only handles PLAINTEXT endpoints");
+                        }
                     }
                 }
+                updateMetadataRequest = new UpdateMetadataRequest(version, controllerId, controllerEpoch, brokerEpoch, partitionStates, liveBrokers);
+                requestCache.put(version, updateMetadataRequest);
             }
-            return new UpdateMetadataRequest(version, controllerId, controllerEpoch, brokerEpoch, partitionStates, liveBrokers);
+            return updateMetadataRequest;
         }
 
         @Override
@@ -327,6 +336,9 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
     private final Map<TopicPartition, PartitionState> partitionStates;
     private final Set<Broker> liveBrokers;
 
+    // LIKAFKA-18349 - Cache the UpdateMetadataRequest struct to reduce memory usage
+    private Struct struct = null;
+
     private UpdateMetadataRequest(short version, int controllerId, int controllerEpoch, long brokerEpoch,
                                   Map<TopicPartition, PartitionState> partitionStates, Set<Broker> liveBrokers) {
         super(ApiKeys.UPDATE_METADATA, version, controllerId, controllerEpoch, brokerEpoch);
@@ -400,74 +412,74 @@ public class UpdateMetadataRequest extends AbstractControlRequest {
 
     @Override
     protected Struct toStruct() {
-        short version = version();
-        Struct struct = new Struct(ApiKeys.UPDATE_METADATA.requestSchema(version));
-        struct.set(CONTROLLER_ID, controllerId);
-        struct.set(CONTROLLER_EPOCH, controllerEpoch);
-        struct.setIfExists(BROKER_EPOCH, brokerEpoch);
+        if (struct == null) {
+            short version = version();
+            Struct struct = new Struct(ApiKeys.UPDATE_METADATA.requestSchema(version));
+            struct.set(CONTROLLER_ID, controllerId);
+            struct.set(CONTROLLER_EPOCH, controllerEpoch);
+            struct.setIfExists(BROKER_EPOCH, brokerEpoch);
 
-        if (struct.hasField(TOPIC_STATES)) {
-            Map<String, Map<Integer, PartitionState>> topicStates = CollectionUtils.groupPartitionDataByTopic(partitionStates);
-            List<Struct> topicStatesData = new ArrayList<>(topicStates.size());
-            for (Map.Entry<String, Map<Integer, PartitionState>> entry : topicStates.entrySet()) {
-                Struct topicStateData = struct.instance(TOPIC_STATES);
-                topicStateData.set(TOPIC_NAME, entry.getKey());
-                Map<Integer, PartitionState> partitionMap = entry.getValue();
-                List<Struct> partitionStatesData = new ArrayList<>(partitionMap.size());
-                for (Map.Entry<Integer, PartitionState> partitionEntry : partitionMap.entrySet()) {
-                    Struct partitionStateData = topicStateData.instance(PARTITION_STATES);
-                    partitionStateData.set(PARTITION_ID, partitionEntry.getKey());
-                    partitionEntry.getValue().setStruct(partitionStateData);
+            if (struct.hasField(TOPIC_STATES)) {
+                Map<String, Map<Integer, PartitionState>> topicStates = CollectionUtils.groupPartitionDataByTopic(partitionStates);
+                List<Struct> topicStatesData = new ArrayList<>(topicStates.size());
+                for (Map.Entry<String, Map<Integer, PartitionState>> entry : topicStates.entrySet()) {
+                    Struct topicStateData = struct.instance(TOPIC_STATES);
+                    topicStateData.set(TOPIC_NAME, entry.getKey());
+                    Map<Integer, PartitionState> partitionMap = entry.getValue();
+                    List<Struct> partitionStatesData = new ArrayList<>(partitionMap.size());
+                    for (Map.Entry<Integer, PartitionState> partitionEntry : partitionMap.entrySet()) {
+                        Struct partitionStateData = topicStateData.instance(PARTITION_STATES);
+                        partitionStateData.set(PARTITION_ID, partitionEntry.getKey());
+                        partitionEntry.getValue().setStruct(partitionStateData);
+                        partitionStatesData.add(partitionStateData);
+                    }
+                    topicStateData.set(PARTITION_STATES, partitionStatesData.toArray());
+                    topicStatesData.add(topicStateData);
+                }
+                struct.set(TOPIC_STATES, topicStatesData.toArray());
+            } else {
+                List<Struct> partitionStatesData = new ArrayList<>(partitionStates.size());
+                for (Map.Entry<TopicPartition, PartitionState> entry : partitionStates.entrySet()) {
+                    Struct partitionStateData = struct.instance(PARTITION_STATES);
+                    TopicPartition topicPartition = entry.getKey();
+                    partitionStateData.set(TOPIC_NAME, topicPartition.topic());
+                    partitionStateData.set(PARTITION_ID, topicPartition.partition());
+                    entry.getValue().setStruct(partitionStateData);
                     partitionStatesData.add(partitionStateData);
                 }
-                topicStateData.set(PARTITION_STATES, partitionStatesData.toArray());
-                topicStatesData.add(topicStateData);
+                struct.set(PARTITION_STATES, partitionStatesData.toArray());
             }
-            struct.set(TOPIC_STATES, topicStatesData.toArray());
-        } else {
-            List<Struct> partitionStatesData = new ArrayList<>(partitionStates.size());
-            for (Map.Entry<TopicPartition, PartitionState> entry : partitionStates.entrySet()) {
-                Struct partitionStateData = struct.instance(PARTITION_STATES);
-                TopicPartition topicPartition = entry.getKey();
-                partitionStateData.set(TOPIC_NAME, topicPartition.topic());
-                partitionStateData.set(PARTITION_ID, topicPartition.partition());
-                entry.getValue().setStruct(partitionStateData);
-                partitionStatesData.add(partitionStateData);
-            }
-            struct.set(PARTITION_STATES, partitionStatesData.toArray());
-        }
 
-        List<Struct> brokersData = new ArrayList<>(liveBrokers.size());
-        for (Broker broker : liveBrokers) {
-            Struct brokerData = struct.instance(LIVE_BROKERS);
-            brokerData.set(BROKER_ID, broker.id);
+            List<Struct> brokersData = new ArrayList<>(liveBrokers.size());
+            for (Broker broker : liveBrokers) {
+                Struct brokerData = struct.instance(LIVE_BROKERS);
+                brokerData.set(BROKER_ID, broker.id);
 
-            if (version == 0) {
-                EndPoint endPoint = broker.endPoints.get(0);
-                brokerData.set(HOST, endPoint.host);
-                brokerData.set(PORT, endPoint.port);
-            } else {
-                List<Struct> endPointsData = new ArrayList<>(broker.endPoints.size());
-                for (EndPoint endPoint : broker.endPoints) {
-                    Struct endPointData = brokerData.instance(ENDPOINTS);
-                    endPointData.set(PORT, endPoint.port);
-                    endPointData.set(HOST, endPoint.host);
-                    endPointData.set(SECURITY_PROTOCOL_TYPE, endPoint.securityProtocol.id);
-                    if (version >= 3)
-                        endPointData.set(LISTENER_NAME, endPoint.listenerName.value());
-                    endPointsData.add(endPointData);
-
+                if (version == 0) {
+                    EndPoint endPoint = broker.endPoints.get(0);
+                    brokerData.set(HOST, endPoint.host);
+                    brokerData.set(PORT, endPoint.port);
+                } else {
+                    List<Struct> endPointsData = new ArrayList<>(broker.endPoints.size());
+                    for (EndPoint endPoint : broker.endPoints) {
+                        Struct endPointData = brokerData.instance(ENDPOINTS);
+                        endPointData.set(PORT, endPoint.port);
+                        endPointData.set(HOST, endPoint.host);
+                        endPointData.set(SECURITY_PROTOCOL_TYPE, endPoint.securityProtocol.id);
+                        if (version >= 3) endPointData.set(LISTENER_NAME, endPoint.listenerName.value());
+                        endPointsData.add(endPointData);
+                    }
+                    brokerData.set(ENDPOINTS, endPointsData.toArray());
+                    if (version >= 2) {
+                        brokerData.set(RACK, broker.rack);
+                    }
                 }
-                brokerData.set(ENDPOINTS, endPointsData.toArray());
-                if (version >= 2) {
-                    brokerData.set(RACK, broker.rack);
-                }
+
+                brokersData.add(brokerData);
             }
-
-            brokersData.add(brokerData);
+            struct.set(LIVE_BROKERS, brokersData.toArray());
+            this.struct = struct;
         }
-        struct.set(LIVE_BROKERS, brokersData.toArray());
-
         return struct;
     }
 
