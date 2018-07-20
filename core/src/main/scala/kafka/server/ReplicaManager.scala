@@ -561,7 +561,6 @@ class ReplicaManager(val config: KafkaConfig,
           case e@ (_: UnknownTopicOrPartitionException |
                    _: NotLeaderForPartitionException |
                    _: OffsetOutOfRangeException |
-                   _: PolicyViolationException |
                    _: KafkaStorageException |
                    _: NotEnoughReplicasException) =>
             (topicPartition, LogDeleteRecordsResult(-1L, -1L, Some(e)))

@@ -215,7 +215,6 @@ class AdminClient(val time: Time,
    * and their interpretations below:
    *
    * - DisconnectException if leader node of the partition is not available. Need retry by user.
-   * - PolicyViolationException if the topic is configured as non-deletable.
    * - TopicAuthorizationException if the topic doesn't exist and the user doesn't have the authority to create the topic
    * - TimeoutException if response is not available within the timeout specified by either Future's timeout or AdminClient's request timeout
    * - UnknownTopicOrPartitionException if the partition doesn't exist or if the user doesn't have the authority to describe the topic

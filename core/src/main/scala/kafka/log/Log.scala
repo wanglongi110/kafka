@@ -1364,8 +1364,12 @@ class Log(@volatile var dir: File,
    * or because the log size is > retentionSize
    */
   def deleteOldSegments(): Int = {
-    if (!config.delete || !sanityChecked) return 0
-    deleteRetentionMsBreachedSegments() + deleteRetentionSizeBreachedSegments() + deleteLogStartOffsetBreachedSegments()
+    if (!sanityChecked) return 0
+    var numDeletedSegments = 0
+    if (config.delete) 
+      numDeletedSegments = deleteRetentionMsBreachedSegments() + deleteRetentionSizeBreachedSegments()
+    numDeletedSegments += deleteLogStartOffsetBreachedSegments()
+    numDeletedSegments
   }
 
   private def deleteRetentionMsBreachedSegments(): Int = {
@@ -1391,7 +1395,8 @@ class Log(@volatile var dir: File,
 
   private def deleteLogStartOffsetBreachedSegments(): Int = {
     def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]) =
-      nextSegmentOpt.exists(_.baseOffset <= logStartOffset)
+      nextSegmentOpt.exists(_.baseOffset <= logStartOffset) || 
+        (nextSegmentOpt.isEmpty && logEndOffset == logStartOffset)
     deleteOldSegments(shouldDelete, reason = s"log start offset $logStartOffset breach")
   }
 

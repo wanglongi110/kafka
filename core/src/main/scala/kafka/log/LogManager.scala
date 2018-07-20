@@ -111,7 +111,7 @@ class LogManager(logDirs: Array[File],
   // public, so we can access this from kafka.admin.DeleteTopicTest
   val cleaner: LogCleaner =
     if(cleanerConfig.enableCleaner)
-      new LogCleaner(cleanerConfig, liveLogDirs, logs, logDirFailureChannel, time = time)
+      new LogCleaner(cleanerConfig, liveLogDirs, logs, logDirFailureChannel, retentionCheckMs, time = time)
     else
       null
 

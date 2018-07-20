@@ -26,11 +26,10 @@ import kafka.controller.KafkaController
 import kafka.log.{LogAppendInfo, LogConfig}
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server._
-import kafka.server.checkpoints.CheckpointPersistentCache
 import kafka.utils.CoreUtils.{inReadLock, inWriteLock}
 import kafka.utils._
 import org.apache.kafka.common.TopicPartition
-import org.apache.kafka.common.errors.{NotEnoughReplicasException, NotLeaderForPartitionException, PolicyViolationException}
+import org.apache.kafka.common.errors.{NotEnoughReplicasException, NotLeaderForPartitionException}
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.protocol.Errors._
 import org.apache.kafka.common.record.MemoryRecords
@@ -538,8 +537,6 @@ class Partition(val topic: String,
       leaderReplicaIfLocal match {
         case Some(leaderReplica) =>
           leaderReplica.maybeIncrementLogStartOffset(offset)
-          if (!leaderReplica.log.get.config.delete)
-            throw new PolicyViolationException("Records of partition %s can not be deleted due to the configured policy".format(topicPartition))
           lowWatermarkIfLeader
         case None =>
           throw new NotLeaderForPartitionException("Leader not local for partition %s on broker %d"
