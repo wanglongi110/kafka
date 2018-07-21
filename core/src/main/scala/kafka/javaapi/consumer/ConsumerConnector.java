@@ -84,6 +84,9 @@ public interface ConsumerConnector {
      */
     public void setConsumerRebalanceListener(ConsumerRebalanceListener listener);
 
+    public Map<TopicAndPartition, OffsetAndMetadata> lastCommittedPartitionsAndOffsets();
+
+
     /**
      *  Shut down the connector
      */
