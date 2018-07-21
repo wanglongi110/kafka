@@ -121,6 +121,8 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
     underlying.setConsumerRebalanceListener(consumerRebalanceListener)
   }
 
+  def lastCommittedPartitionsAndOffsets = underlying.getLastCommittedPartitionsAndOffsets.asJava
+
   def shutdown() {
     underlying.shutdown
   }

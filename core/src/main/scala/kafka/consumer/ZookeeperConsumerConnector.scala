@@ -100,6 +100,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
   private val topicThreadIdAndQueues = new Pool[(String, ConsumerThreadId), BlockingQueue[FetchedDataChunk]]
   private val scheduler = new KafkaScheduler(threads = 1, threadNamePrefix = "kafka-consumer-scheduler-")
   private val messageStreamCreated = new AtomicBoolean(false)
+  private var lastCommittedPartitionsAndOffsets: immutable.Map[TopicAndPartition, OffsetAndMetadata] = null
 
   private var sessionExpirationListener: ZKSessionExpireListener = null
   private var topicPartitionChangeListener: ZKTopicPartitionChangeListener = null
@@ -350,6 +351,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
             offsetsToCommit.foreach { case (topicAndPartition, offsetAndMetadata) =>
               commitOffsetToZooKeeper(topicAndPartition, offsetAndMetadata.offset)
             }
+            lastCommittedPartitionsAndOffsets = offsetsToCommit
             true
           } else {
             val offsetCommitRequest = OffsetCommitRequest(config.groupId, offsetsToCommit, clientId = config.clientId)
@@ -366,6 +368,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
                   if (error == Errors.NONE && config.dualCommitEnabled) {
                     val offset = offsetsToCommit(topicPartition).offset
                     commitOffsetToZooKeeper(topicPartition, offset)
+                    lastCommittedPartitionsAndOffsets = offsetsToCommit
                   }
 
                   (folded._1 || // update commitFailed
@@ -419,6 +422,8 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
       }
     }
   }
+
+  def getLastCommittedPartitionsAndOffsets = lastCommittedPartitionsAndOffsets
 
   private def fetchOffsetFromZooKeeper(topicPartition: TopicAndPartition) = {
     val dirs = new ZKGroupTopicDirs(config.groupId, topicPartition.topic)
