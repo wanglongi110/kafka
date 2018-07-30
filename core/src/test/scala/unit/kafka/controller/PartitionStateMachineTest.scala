@@ -71,7 +71,7 @@ class PartitionStateMachineTest extends ZooKeeperTestHarness {
     val topic = "test"
     val partitions = partitionIds.map(new TopicAndPartition("test", _))
 
-    controller.topicDeletionManager.topicsToBeDeleted.put(topic, 0L)
+    controller.topicDeletionManager.topicsToBeDeleted += topic
 
     partitionStateMachine.handleStateChanges(partitions, NewPartition)
     partitionStateMachine.handleStateChanges(partitions, OfflinePartition)

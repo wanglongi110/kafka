@@ -404,13 +404,13 @@ class DeleteTopicTest extends ZooKeeperTestHarness {
   }
 
   @Test
-  def testDeletingMulitpleTopicsAndOnlyOneCanBeInProgress() {
+  def testDeletingMultipleTopicsWithOfflineBroker() {
     // create the cluster
     val brokerConfigs = TestUtils.createBrokerConfigs(3, zkConnect, enableControlledShutdown = false)
     brokerConfigs.foreach(_.setProperty("delete.topic.enable", "true"))
     servers = brokerConfigs.map(b => TestUtils.createServer(KafkaConfig.fromProps(b)))
 
-    // create one topic with replicas assigned to broker 0 and 1
+    // create one topic with replicas assigned to broker 1 and 2
     val topic1Partition0 = new TopicPartition("topic1", 0)
     val topic1Partition1 = new TopicPartition("topic1", 1)
     val topic1 = topic1Partition0.topic
@@ -418,21 +418,28 @@ class DeleteTopicTest extends ZooKeeperTestHarness {
 
     AdminUtils.createOrUpdateTopicPartitionAssignmentPathInZK(zkUtils, topic1, partitionReplicaAssignment1)
 
-    // create another topic with replicas assigned to broker 1 and 2
+    // create another topic with replicas assigned to broker 0 and 1
     val topic2Partition0 = new TopicPartition("topic2", 0)
     val topic2 = topic2Partition0.topic
     val partitionReplicaAssignment2 = Map(0 -> List(0, 1))
     AdminUtils.createOrUpdateTopicPartitionAssignmentPathInZK(zkUtils, topic2, partitionReplicaAssignment2)
 
-    // fail broker 0 so that topic1 becomes a topic ineligible for deletion
+    // create a third topic with replicas assigned to broker 1 and 0
+    val topic3Partition0 = new TopicPartition("topic3", 0)
+    val topic3 = topic3Partition0.topic
+    val partitionReplicaAssignment3 = Map(0 -> List(1, 0))
+    AdminUtils.createOrUpdateTopicPartitionAssignmentPathInZK(zkUtils, topic3, partitionReplicaAssignment3)
+
+    // fail broker 2 so that topic1 becomes a topic ineligible for deletion
     val broker2 = servers.filter(s => s.config.brokerId == 2).last
     broker2.shutdown()
-    // delete topic1
+    // delete topic1, topic2 and topic3
     AdminUtils.deleteTopic(zkUtils, topic1)
     AdminUtils.deleteTopic(zkUtils, topic2)
+    AdminUtils.deleteTopic(zkUtils, topic3)
 
-    /** verify that even though topic2 can potentially be deleted, kafka won't allow deletion of topic2
-      * to start if deletion of topic1 has not completed
+    /** verify that topic2 and topic3 can be deleted, even though
+      * topic1 is ineligible for deletion
       */
     ensureControllerExists()
     val (controller, controllerId) = getController()
@@ -440,23 +447,19 @@ class DeleteTopicTest extends ZooKeeperTestHarness {
 
     val allReplicasForTopic1 = getAllReplicasFromAssignment(topic1, partitionReplicaAssignment1)
     TestUtils.waitUntilTrue(() => {
-      //allReplicasForTopic1 ==
       val replicasInDeletionSuccessful = controller.kafkaController.replicaStateMachine.replicasInState(topic1, ReplicaDeletionSuccessful)
       val offlineReplicas = controller.kafkaController.replicaStateMachine.replicasInState(topic1, OfflineReplica)
       info(s"replicasInDeletionStarted ${replicasInDeletionSuccessful.mkString(",")} and offline replicas ${offlineReplicas.mkString(",")}")
-      allReplicasForTopic1 == (replicasInDeletionSuccessful union offlineReplicas)
-    }, s"Not all replicas for topic $topic1 are in states of either ReplicaDeletionSuccessful or OfflineReplica")
+      (allReplicasForTopic1 == (replicasInDeletionSuccessful union offlineReplicas) && offlineReplicas.nonEmpty)
+    }, s"Not all replicas for topic $topic1 are in states of either ReplicaDeletionSuccessful or OfflineReplica (at least one)")
 
-    // verify that all replicas in topic2 are Online
-    val allReplicasForTopic2 = getAllReplicasFromAssignment(topic2, partitionReplicaAssignment2)
-    assertTrue(s"Deletion of topic $topic2 should not start before deletion of $topic1 has completed",
-      controller.kafkaController.replicaStateMachine.replicasInState(topic2, OnlineReplica) == allReplicasForTopic2
-    )
+    // verify that topic2 and topic3 were deleted
+    TestUtils.verifyTopicDeletion(zkUtils, topic2, 1, servers)
+    TestUtils.verifyTopicDeletion(zkUtils, topic3, 1, servers)
 
     // bring up the failed broker, and verify the eventual topic deletion
     broker2.startup()
     TestUtils.verifyTopicDeletion(zkUtils, topic1, 2, servers)
-    TestUtils.verifyTopicDeletion(zkUtils, topic2, 1, servers)
   }
 
   @Test
