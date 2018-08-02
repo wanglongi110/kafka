@@ -113,6 +113,13 @@ For a detailed description of spotbugs bug categories, see https://spotbugs.read
     </Match>
 
     <Match>
+        <!-- Add a suppression for a false locking warning. -->
+        <Package name="kafka.consumer"/>
+        <Source name="ZookeeperConsumerConnector.scala"/>
+        <Bug pattern="UL_UNRELEASED_LOCK_EXCEPTION_PATH"/>
+    </Match>
+
+    <Match>
         <!-- Suppress a warning about some static initializers in Schema using instances of a
              subclass. -->
         <Or>
@@ -270,6 +277,14 @@ For a detailed description of spotbugs bug categories, see https://spotbugs.read
         <Package name="org.apache.kafka.clients.producer" />
         <Source name="TransactionState.java" />
         <Bug pattern="IS2_INCONSISTENT_SYNC" />
+    </Match>
+
+    <Match>
+        <!-- Ignore a spurious warning about the types used in
+             AdminClient#deleteRecordsBefore -->
+        <Package name="kafka.admin"/>
+        <Source name="AdminClient.scala"/>
+        <Bug pattern="GC_UNRELATED_TYPES"/>
     </Match>
 
     <Match>

@@ -98,11 +98,11 @@ class ReplicationTest(EndToEndTest):
         "replication-factor": 3,
         "configs": {"min.insync.replicas": 2}
     }
- 
+
     def __init__(self, test_context):
         """:type test_context: ducktape.tests.test.TestContext"""
         super(ReplicationTest, self).__init__(test_context=test_context, topic_config=self.TOPIC_CONFIG)
- 
+
     def min_cluster_size(self):
         """Override this since we're adding services outside of the constructor"""
         return super(ReplicationTest, self).min_cluster_size() + self.num_producers + self.num_consumers
@@ -142,6 +142,7 @@ class ReplicationTest(EndToEndTest):
             - Validate that every acked message was consumed
         """
 
+
         self.create_zookeeper()
         self.zk.start()
 
@@ -150,8 +151,19 @@ class ReplicationTest(EndToEndTest):
                           interbroker_security_protocol=security_protocol,
                           client_sasl_mechanism=client_sasl_mechanism,
                           interbroker_sasl_mechanism=interbroker_sasl_mechanism)
-        self.kafka.start()
+        self.kafka.security_protocol = security_protocol
+        self.kafka.interbroker_security_protocol = security_protocol
+        self.kafka.client_sasl_mechanism = client_sasl_mechanism
+        self.kafka.interbroker_sasl_mechanism = interbroker_sasl_mechanism
+        new_consumer = False if self.kafka.security_protocol == "PLAINTEXT" else True
+        self.enable_idempotence = enable_idempotence
+        compression_types = None if not compression_type else [compression_type] * self.num_producers
+        self.producer = VerifiableProducer(self.test_context, self.num_producers, self.kafka, self.topic,
+                                           throughput=self.producer_throughput, compression_types=compression_types,
+                                           enable_idempotence=enable_idempotence)
+        self.consumer = ConsoleConsumer(self.test_context, self.num_consumers, self.kafka, self.topic, new_consumer=new_consumer, consumer_timeout_ms=60000, message_validator=is_int)
 
+        self.kafka.start()
         compression_types = None if not compression_type else [compression_type]
         self.create_producer(compression_types=compression_types, enable_idempotence=enable_idempotence)
         self.producer.start()

@@ -30,7 +30,9 @@ import java.util.concurrent.{Callable, ExecutionException, Executors, TimeUnit}
 import javax.net.ssl.X509TrustManager
 import kafka.api._
 import kafka.cluster.{Broker, EndPoint}
+import kafka.consumer.{ConsumerConfig, ConsumerTimeoutException, KafkaStream}
 import kafka.log._
+import kafka.message._
 import kafka.security.auth.{Acl, Authorizer, Resource}
 import kafka.server._
 import kafka.server.checkpoints.OffsetCheckpointFile
@@ -600,7 +602,7 @@ object TestUtils extends Logging {
     securityConfigs(Mode.CLIENT, securityProtocol, trustStoreFile, "admin-client", SslCertificateCn, saslProperties)
 
   /**
-   * Create a consumer with a few pre-configured properties.
+   * Create a new consumer with a few pre-configured properties.
    */
   def createConsumer[K, V](brokerList: String,
                            groupId: String = "group",
@@ -612,8 +614,11 @@ object TestUtils extends Logging {
                            trustStoreFile: Option[File] = None,
                            saslProperties: Option[Properties] = None,
                            keyDeserializer: Deserializer[K] = new ByteArrayDeserializer,
-                           valueDeserializer: Deserializer[V] = new ByteArrayDeserializer): KafkaConsumer[K, V] = {
-    val consumerProps = new Properties
+                           valueDeserializer: Deserializer[V] =new ByteArrayDeserializer,
+                           props: Option[Properties] = None) : KafkaConsumer[K, V] = {
+    import org.apache.kafka.clients.consumer.ConsumerConfig
+
+    val consumerProps = props.getOrElse(new Properties())
     consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList)
     consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset)
     consumerProps.put(ConsumerConfig.GROUP_ID_CONFIG, groupId)
@@ -622,6 +627,60 @@ object TestUtils extends Logging {
     consumerProps.put(ConsumerConfig.ISOLATION_LEVEL_CONFIG, if (readCommitted) "read_committed" else "read_uncommitted")
     consumerProps ++= consumerSecurityConfigs(securityProtocol, trustStoreFile, saslProperties)
     new KafkaConsumer[K, V](consumerProps, keyDeserializer, valueDeserializer)
+  }
+
+  /**
+   * Create a default producer config properties map with the given metadata broker list
+   */
+  def getProducerConfig(brokerList: String): Properties = {
+    val props = new Properties()
+    props.put("metadata.broker.list", brokerList)
+    props.put("message.send.max.retries", "5")
+    props.put("retry.backoff.ms", "1000")
+    props.put("request.timeout.ms", "2000")
+    props.put("request.required.acks", "-1")
+    props.put("send.buffer.bytes", "65536")
+
+    props
+  }
+
+  /**
+    * Create a test config for a consumer
+    */
+  def createConsumerProperties(zkConnect: String, groupId: String, consumerId: String,
+    consumerTimeout: Long = -1): Properties = {
+    val props = new Properties
+    props.put("zookeeper.connect", zkConnect)
+    props.put("group.id", groupId)
+    props.put("consumer.id", consumerId)
+    props.put("consumer.timeout.ms", consumerTimeout.toString)
+    props.put("zookeeper.session.timeout.ms", "6000")
+    props.put("zookeeper.sync.time.ms", "200")
+    props.put("auto.commit.interval.ms", "1000")
+    props.put("rebalance.max.retries", "4")
+    props.put("auto.offset.reset", "smallest")
+    props.put("num.consumer.fetchers", "2")
+
+    props
+  }
+
+  @deprecated("This method has been deprecated and will be removed in a future release.", "0.11.0.0")
+  def updateConsumerOffset(config : ConsumerConfig, path : String, offset : Long) = {
+    val zkUtils = ZkUtils(config.zkConnect, config.zkSessionTimeoutMs, config.zkConnectionTimeoutMs, false)
+    zkUtils.updatePersistentPath(path, offset.toString)
+    zkUtils.close()
+
+  }
+
+  def getMessageIterator(iter: Iterator[MessageAndOffset]): Iterator[Message] = {
+    new IteratorTemplate[Message] {
+      override def makeNext(): Message = {
+        if (iter.hasNext)
+          iter.next.message
+        else
+          allDone()
+      }
+    }
   }
 
   def createBrokersInZk(zkClient: KafkaZkClient, ids: Seq[Int]): Seq[Broker] =
@@ -847,6 +906,13 @@ object TestUtils extends Logging {
       .getOrElse(fail(s"Unable to locate follower for $topicPartition"))
   }
 
+  def createRequestByteBuffer(request: RequestOrResponse): ByteBuffer = {
+    val byteBuffer = ByteBuffer.allocate(request.sizeInBytes + 2)
+    byteBuffer.putShort(request.requestId.get)
+    request.writeTo(byteBuffer)
+    byteBuffer.rewind()
+    byteBuffer
+  }
   /**
     * Wait until all brokers know about each other.
     *
@@ -1045,6 +1111,48 @@ object TestUtils extends Logging {
     } finally {
       producer.close()
     }
+  }
+
+  /**
+   * Consume all messages (or a specific number of messages)
+   *
+   * @param topicMessageStreams the Topic Message Streams
+   * @param nMessagesPerThread an optional field to specify the exact number of messages to be returned.
+   *                           ConsumerTimeoutException will be thrown if there are no messages to be consumed.
+   *                           If not specified, then all available messages will be consumed, and no exception is thrown.
+   * @return the list of messages consumed.
+   */
+  @deprecated("This method has been deprecated and will be removed in a future release.", "0.11.0.0")
+  def getMessages(topicMessageStreams: Map[String, List[KafkaStream[String, String]]],
+                  nMessagesPerThread: Int = -1): List[String] = {
+
+    var messages: List[String] = Nil
+    val shouldGetAllMessages = nMessagesPerThread < 0
+    for (messageStreams <- topicMessageStreams.values) {
+      for (messageStream <- messageStreams) {
+        val iterator = messageStream.iterator()
+        try {
+          var i = 0
+          while ((shouldGetAllMessages && iterator.hasNext()) || (i < nMessagesPerThread)) {
+            assertTrue(iterator.hasNext)
+            val message = iterator.next().message // will throw a timeout exception if the message isn't there
+            messages ::= message
+            debug("received message: " + message)
+            i += 1
+          }
+        } catch {
+          case e: ConsumerTimeoutException =>
+            if (shouldGetAllMessages) {
+              // swallow the exception
+              debug("consumer timed out after receiving " + messages.length + " message(s).")
+            } else {
+              throw e
+            }
+        }
+      }
+    }
+
+    messages.reverse
   }
 
   def verifyTopicDeletion(zkClient: KafkaZkClient, topic: String, numPartitions: Int, servers: Seq[KafkaServer]) {

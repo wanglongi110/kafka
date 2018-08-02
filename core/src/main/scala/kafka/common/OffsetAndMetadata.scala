@@ -49,4 +49,13 @@ object OffsetAndMetadata {
   def apply(offset: Long, leaderEpoch: Optional[Integer], metadata: String, commitTimestamp: Long): OffsetAndMetadata = {
     OffsetAndMetadata(offset, leaderEpoch, metadata, commitTimestamp, None)
   }
+
+  // Add back the following functions for old consumers support
+  def apply(offset: Long): OffsetAndMetadata = {
+    OffsetAndMetadata(offset, Optional.empty(), NoMetadata, OffsetMetadata.NoTimestamp, None)
+  }
+
+  def apply(offset: Long, metadata: String): OffsetAndMetadata = {
+    OffsetAndMetadata(offset, Optional.empty(), metadata, OffsetMetadata.NoTimestamp, None)
+  }
 }

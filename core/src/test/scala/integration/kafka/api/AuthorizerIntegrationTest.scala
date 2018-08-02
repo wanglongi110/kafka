@@ -19,7 +19,7 @@ import java.util.regex.Pattern
 import java.util.{Collections, Optional, Properties}
 import java.time.Duration
 
-import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, ConsumerGroupService}
+import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, KafkaConsumerGroupService}
 import kafka.log.LogConfig
 import kafka.network.SocketServer
 import kafka.security.auth._
@@ -367,7 +367,7 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
                   .setPartitionIndex(part)
                   .setCommittedOffset(0)
                   .setCommittedLeaderEpoch(RecordBatch.NO_PARTITION_LEADER_EPOCH)
-                  .setCommitTimestamp(OffsetCommitRequest.DEFAULT_TIMESTAMP)
+                  .setCommitTimestamp(org.apache.kafka.common.requests.OffsetCommitRequest.DEFAULT_TIMESTAMP)
                   .setCommittedMetadata("metadata")
               )))
           )
@@ -1162,7 +1162,7 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
 
     val cgcArgs = Array("--bootstrap-server", brokerList, "--describe", "--group", group)
     val opts = new ConsumerGroupCommandOptions(cgcArgs)
-    val consumerGroupService = new ConsumerGroupService(opts)
+    val consumerGroupService = new KafkaConsumerGroupService(opts)
     consumerGroupService.describeGroups()
     consumerGroupService.close()
   }

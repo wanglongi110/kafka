@@ -25,7 +25,7 @@ import org.apache.kafka.common.{KafkaException, TopicPartition}
 import org.apache.kafka.common.errors.SaslAuthenticationException
 import org.junit.{After, Before, Test}
 import org.junit.Assert._
-import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, ConsumerGroupService}
+import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, KafkaConsumerGroupService}
 import kafka.server.KafkaConfig
 import kafka.utils.{JaasTestUtils, TestUtils}
 import kafka.zk.ConfigEntityChangeNotificationZNode
@@ -158,7 +158,7 @@ class SaslClientsWithInvalidCredentialsTest extends IntegrationTestHarness with 
 
   @Test
   def testConsumerGroupServiceWithAuthenticationFailure() {
-    val consumerGroupService: ConsumerGroupService = prepareConsumerGroupService
+    val consumerGroupService: KafkaConsumerGroupService = prepareConsumerGroupService
 
     val consumer = createConsumer()
     consumer.subscribe(List(topic).asJava)
@@ -170,7 +170,7 @@ class SaslClientsWithInvalidCredentialsTest extends IntegrationTestHarness with 
   @Test
   def testConsumerGroupServiceWithAuthenticationSuccess() {
     createClientCredential()
-    val consumerGroupService: ConsumerGroupService = prepareConsumerGroupService
+    val consumerGroupService: KafkaConsumerGroupService = prepareConsumerGroupService
 
     val consumer = createConsumer()
     consumer.subscribe(List(topic).asJava)
@@ -192,7 +192,7 @@ class SaslClientsWithInvalidCredentialsTest extends IntegrationTestHarness with 
                         "--group", "test.group",
                         "--command-config", propsFile.getAbsolutePath)
     val opts = new ConsumerGroupCommandOptions(cgcArgs)
-    val consumerGroupService = new ConsumerGroupService(opts)
+    val consumerGroupService = new KafkaConsumerGroupService(opts)
     consumerGroupService
   }
 
