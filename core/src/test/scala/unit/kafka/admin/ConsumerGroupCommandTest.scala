@@ -21,10 +21,11 @@ import java.time.Duration
 import java.util.concurrent.{ExecutorService, Executors, TimeUnit}
 import java.util.{Collections, Properties}
 
-import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, ConsumerGroupService}
+import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, ConsumerGroupService, KafkaConsumerGroupService, ZkConsumerGroupService}
+import kafka.consumer.OldConsumer
 import kafka.integration.KafkaServerTestHarness
 import kafka.server.KafkaConfig
-import kafka.utils.TestUtils
+import kafka.utils.{TestUtils, Whitelist}
 import org.apache.kafka.clients.consumer.{KafkaConsumer, RangeAssignor}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.WakeupException
@@ -40,6 +41,8 @@ class ConsumerGroupCommandTest extends KafkaServerTestHarness {
   val topic = "foo"
   val group = "test.group"
 
+  @deprecated("This field will be removed in a future release", "0.11.0.0")
+  private val oldConsumers = new ArrayBuffer[OldConsumer]
   private var consumerGroupService: List[ConsumerGroupService] = List()
   private var consumerGroupExecutors: List[AbstractConsumerGroupExecutor] = List()
 
@@ -60,7 +63,16 @@ class ConsumerGroupCommandTest extends KafkaServerTestHarness {
   override def tearDown(): Unit = {
     consumerGroupService.foreach(_.close())
     consumerGroupExecutors.foreach(_.shutdown())
+    oldConsumers.foreach(_.stop())
     super.tearDown()
+  }
+
+  @deprecated("This test has been deprecated and will be removed in a future release.", "0.11.1.0")
+  def createOldConsumer(): Unit = {
+    val consumerProps = new Properties
+    consumerProps.setProperty("group.id", group)
+    consumerProps.setProperty("zookeeper.connect", zkConnect)
+    oldConsumers += new OldConsumer(Whitelist(topic), consumerProps)
   }
 
   def committedOffsets(topic: String = topic, group: String = group): Map[TopicPartition, Long] = {
@@ -82,9 +94,13 @@ class ConsumerGroupCommandTest extends KafkaServerTestHarness {
     }
   }
 
+  def stopRandomOldConsumer(): Unit = {
+    oldConsumers.head.stop()
+  }
+
   def getConsumerGroupService(args: Array[String]): ConsumerGroupService = {
     val opts = new ConsumerGroupCommandOptions(args)
-    val service = new ConsumerGroupService(opts)
+    val service = if (opts.useOldConsumer) new ZkConsumerGroupService(opts) else new KafkaConsumerGroupService(opts)
     consumerGroupService = service :: consumerGroupService
     service
   }

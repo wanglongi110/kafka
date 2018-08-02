@@ -19,7 +19,8 @@ package kafka.server
 
 import java.util.Optional
 
-import kafka.api._
+import AbstractFetcherThread.ResultWithPartitions
+import kafka.api.{FetchRequest => _, _}
 import kafka.cluster.BrokerEndPoint
 import kafka.log.LogAppendInfo
 import kafka.server.AbstractFetcherThread.ResultWithPartitions

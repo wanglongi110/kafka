@@ -54,9 +54,11 @@ class CompressionTest(ProduceConsumeValidateTest):
         # Override this since we're adding services outside of the constructor
         return super(CompressionTest, self).min_cluster_size() + self.num_producers + self.num_consumers
 
+
     @cluster(num_nodes=8)
-    @parametrize(compression_types=COMPRESSION_TYPES)
-    def test_compressed_topic(self, compression_types):
+    @parametrize(compression_types=COMPRESSION_TYPES, new_consumer=True)
+    @parametrize(compression_types=COMPRESSION_TYPES, new_consumer=False)
+    def test_compressed_topic(self, compression_types, new_consumer):
         """Test produce => consume => validate for compressed topics
         Setup: 1 zk, 1 kafka node, 1 topic with partitions=10, replication-factor=1
 
@@ -77,7 +79,8 @@ class CompressionTest(ProduceConsumeValidateTest):
                                            message_validator=is_int_with_prefix,
                                            compression_types=compression_types)
         self.consumer = ConsoleConsumer(self.test_context, self.num_consumers, self.kafka, self.topic,
-                                        consumer_timeout_ms=60000, message_validator=is_int_with_prefix)
+                                        new_consumer=new_consumer, consumer_timeout_ms=60000,
+                                        message_validator=is_int_with_prefix)
         self.kafka.start()
 
         self.run_produce_consume_validate(lambda: wait_until(

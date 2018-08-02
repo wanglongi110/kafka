@@ -21,7 +21,7 @@ import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 
 import joptsimple.OptionException
-import org.junit.Assert.assertEquals
+import org.junit.Assert.{assertEquals, assertFalse, assertTrue}
 import org.junit.Test
 
 class ConsumerPerformanceTest {
@@ -31,18 +31,23 @@ class ConsumerPerformanceTest {
 
   @Test
   def testDetailedHeaderMatchBody(): Unit = {
-    testHeaderMatchContent(detailed = true, 2,
-      () => ConsumerPerformance.printConsumerProgress(1, 1024 * 1024, 0, 1, 0, 0, 1, dateFormat, 1L))
+    testHeaderMatchContent(detailed = true, useOldConsumer = false, 2,
+      () => ConsumerPerformance.printNewConsumerProgress(1, 1024 * 1024, 0, 1, 0, 0, 1, dateFormat, 1L))
+    testHeaderMatchContent(detailed = true, useOldConsumer = true, 4,
+      () => ConsumerPerformance.printOldConsumerProgress(1, 1024 * 1024, 0, 1, 0, 0, 1,
+      dateFormat))
   }
 
   @Test
   def testNonDetailedHeaderMatchBody(): Unit = {
-    testHeaderMatchContent(detailed = false, 2, () => println(s"${dateFormat.format(System.currentTimeMillis)}, " +
+    testHeaderMatchContent(detailed = false, useOldConsumer = false, 2, () => println(s"${dateFormat.format(System.currentTimeMillis)}, " +
       s"${dateFormat.format(System.currentTimeMillis)}, 1.0, 1.0, 1, 1.0, 1, 1, 1.1, 1.1"))
+    testHeaderMatchContent(detailed = false, useOldConsumer = true, 4, () => println(s"${dateFormat.format(System.currentTimeMillis)}, " +
+      s"${dateFormat.format(System.currentTimeMillis)}, 1.0, 1.0, 1, 1.0"))
   }
 
   @Test
-  def testConfig(): Unit = {
+  def testConfigUsingNewConsumer(): Unit = {
     //Given
     val args: Array[String] = Array(
       "--broker-list", "localhost:9092",
@@ -54,13 +59,32 @@ class ConsumerPerformanceTest {
     val config = new ConsumerPerformance.ConsumerPerfConfig(args)
 
     //Then
+    assertFalse(config.useOldConsumer)
     assertEquals("localhost:9092", config.options.valueOf(config.bootstrapServersOpt))
     assertEquals("test", config.topic)
     assertEquals(10, config.numMessages)
   }
 
+  @Test
+  def testConfigUsingOldConsumer() {
+    //Given
+    val args: Array[String] = Array(
+      "--zookeeper", "localhost:2181",
+      "--topic", "test",
+      "--messages", "10")
+
+    //When
+    val config = new ConsumerPerformance.ConsumerPerfConfig(args)
+
+    //Then
+    assertTrue(config.useOldConsumer)
+    assertEquals("localhost:2181", config.options.valueOf(config.zkConnectOpt))
+    assertEquals("test", config.topic)
+    assertEquals(10, config.numMessages)
+  }
+
   @Test(expected = classOf[OptionException])
-  def testConfigWithUnrecognizedOption(): Unit = {
+  def testConfigUsingNewConsumerUnrecognizedOption(): Unit = {
     //Given
     val args: Array[String] = Array(
       "--broker-list", "localhost:9092",
@@ -73,9 +97,9 @@ class ConsumerPerformanceTest {
     new ConsumerPerformance.ConsumerPerfConfig(args)
   }
 
-  private def testHeaderMatchContent(detailed: Boolean, expectedOutputLineCount: Int, fun: () => Unit): Unit = {
+  private def testHeaderMatchContent(detailed: Boolean, useOldConsumer: Boolean, expectedOutputLineCount: Int, fun: () => Unit): Unit = {
     Console.withOut(outContent) {
-      ConsumerPerformance.printHeader(detailed)
+      ConsumerPerformance.printHeader(detailed, useOldConsumer)
       fun()
 
       val contents = outContent.toString.split("\n")
