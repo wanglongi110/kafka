@@ -154,6 +154,16 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
   private var _clusterId: String = null
   private var _brokerTopicStats: BrokerTopicStats = null
 
+  private var healthCheckScheduler: KafkaScheduler = null
+
+  private def haltIfNotHealthy() {
+    // This relies on io-thread to receive request from RequestChannel with 300 ms timeout, so that lastDequeueTimeMs
+    // will keep increasing even if there is no incoming request
+    if (time.milliseconds - socketServer.dataPlaneRequestChannel.lastDequeueTimeMs > config.requestMaxLocalTimeMs) {
+      fatal(s"It has been more than ${config.requestMaxLocalTimeMs} ms since the last time any io-thread reads from RequestChannel. Shutdown broker now.")
+      Runtime.getRuntime.halt(1)
+    }
+  }
 
   def clusterId: String = _clusterId
 
@@ -260,6 +270,13 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
 
         val brokerInfo = createBrokerInfo
         val brokerEpoch = zkClient.registerBroker(brokerInfo)
+
+        healthCheckScheduler = new KafkaScheduler(threads = 1, threadNamePrefix = "kafka-healthcheck-scheduler-")
+        healthCheckScheduler.startup()
+        healthCheckScheduler.schedule(name = "halt-broker-if-not-healthy",
+                                      fun = haltIfNotHealthy,
+                                      period = 10000,
+                                      unit = TimeUnit.MILLISECONDS)
 
         // Now that the broker id is successfully registered, checkpoint it
         checkpointBrokerId(config.brokerId)
@@ -589,6 +606,9 @@ class KafkaServer(val config: KafkaConfig, time: Time = Time.SYSTEM, threadNameP
       if (shutdownLatch.getCount > 0 && isShuttingDown.compareAndSet(false, true)) {
         CoreUtils.swallow(controlledShutdown(), this)
         brokerState.newState(BrokerShuttingDown)
+
+        if (healthCheckScheduler != null)
+          healthCheckScheduler.shutdown()
 
         if (dynamicConfigManager != null)
           CoreUtils.swallow(dynamicConfigManager.shutdown(), this)
