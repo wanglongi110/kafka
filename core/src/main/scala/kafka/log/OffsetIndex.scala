@@ -55,24 +55,32 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
   override def entrySize = 8
 
   /* the last offset in the index */
-  private[this] var _lastOffset = lastEntry.offset
+  private[this] var _lastOffset: Option[Long] = None
 
   debug(s"Loaded index file ${file.getAbsolutePath} with maxEntries = $maxEntries, " +
-    s"maxIndexSize = $maxIndexSize, entries = ${_entries}, lastOffset = ${_lastOffset}, file position = ${mmap.position()}")
+    s"maxIndexSize = $maxIndexSize, entries = ${entries}, lastOffset = ${lastOffset}, file position = ${mmap.position()}")
 
   /**
    * The last entry in the index
    */
   private def lastEntry: OffsetPosition = {
     inLock(lock) {
-      _entries match {
+      entries match {
         case 0 => OffsetPosition(baseOffset, 0)
         case s => parseEntry(mmap, s - 1).asInstanceOf[OffsetPosition]
       }
     }
   }
 
-  def lastOffset: Long = _lastOffset
+  def lastOffset: Long = {
+    if (_lastOffset.isEmpty) {
+      inLock(lock) {
+        if (_lastOffset.isEmpty)
+          _lastOffset = Some(lastEntry.offset)
+      }
+    }
+    _lastOffset.get
+  }
 
   /**
    * Find the largest offset less than or equal to the given targetOffset
@@ -125,7 +133,7 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    */
   def entry(n: Int): OffsetPosition = {
     maybeLock(lock) {
-      if(n >= _entries)
+      if(n >= entries)
         throw new IllegalArgumentException(s"Attempt to fetch the ${n}th entry from index ${file.getAbsolutePath}, " +
           s"which has size ${_entries}.")
       val idx = mmap.duplicate
@@ -140,16 +148,16 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
   def append(offset: Long, position: Int) {
     inLock(lock) {
       require(!isFull, "Attempt to append to a full index (size = " + _entries + ").")
-      if (_entries == 0 || offset > _lastOffset) {
+      if (entries == 0 || offset > lastOffset) {
         trace(s"Adding index entry $offset => $position to ${file.getAbsolutePath}")
         mmap.putInt(relativeOffset(offset))
         mmap.putInt(position)
-        _entries += 1
-        _lastOffset = offset
-        require(_entries * entrySize == mmap.position(), entries + " entries but file position in index is " + mmap.position() + ".")
+        _entries = Some(entries + 1)
+        _lastOffset = Some(offset)
+        require(entries * entrySize == mmap.position(), entries + " entries but file position in index is " + mmap.position() + ".")
       } else {
         throw new InvalidOffsetException(s"Attempt to append an offset ($offset) to position $entries no larger than" +
-          s" the last offset appended (${_lastOffset}) to ${file.getAbsolutePath}.")
+          s" the last offset appended (${lastOffset}) to ${file.getAbsolutePath}.")
       }
     }
   }
@@ -182,18 +190,18 @@ class OffsetIndex(_file: File, baseOffset: Long, maxIndexSize: Int = -1, writabl
    */
   private def truncateToEntries(entries: Int) {
     inLock(lock) {
-      _entries = entries
-      mmap.position(_entries * entrySize)
-      _lastOffset = lastEntry.offset
+      _entries = Some(entries)
+      mmap.position(entries * entrySize)
+      _lastOffset = Some(lastEntry.offset)
       debug(s"Truncated index ${file.getAbsolutePath} to $entries entries;" +
-        s" position is now ${mmap.position()} and last offset is now ${_lastOffset}")
+        s" position is now ${mmap.position()} and last offset is now ${lastOffset}")
     }
   }
 
   override def sanityCheck() {
-    if (_entries != 0 && _lastOffset < baseOffset)
+    if (entries != 0 && lastOffset < baseOffset)
       throw new CorruptIndexException(s"Corrupt index found, index file (${file.getAbsolutePath}) has non-zero size " +
-        s"but the last offset is ${_lastOffset} which is less than the base offset $baseOffset.")
+        s"but the last offset is ${lastOffset} which is less than the base offset $baseOffset.")
     if (length % entrySize != 0)
       throw new CorruptIndexException(s"Index file ${file.getAbsolutePath} is corrupt, found $length bytes which is " +
         s"neither positive nor a multiple of $entrySize.")
