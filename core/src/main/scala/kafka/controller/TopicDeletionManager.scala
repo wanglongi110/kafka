@@ -373,7 +373,8 @@ class TopicDeletionManager(controller: KafkaController,
         // topic deletion will be kicked off
         onTopicDeletion(Set(topic))
       } else if (isTopicIneligibleForDeletion(topic)) {
-        info(s"Not retrying deletion of topic $topic at this time since it is marked ineligible for deletion")
+        // avoid extensive log when ineligible topics stay in the deletion queue for a long time because of an offline broker
+        debug(s"Not retrying deletion of topic $topic at this time since it is marked ineligible for deletion")
       }
     }
   }
