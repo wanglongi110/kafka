@@ -50,7 +50,7 @@ class LogCleanerManagerTest extends JUnitSuite with Logging {
 
   class LogCleanerManagerMock(logDirs: Seq[File],
                               logs: Pool[TopicPartition, Log],
-                              logDirFailureChannel: LogDirFailureChannel) extends LogCleanerManager(logDirs, logs, logDirFailureChannel) {
+                              logDirFailureChannel: LogDirFailureChannel) extends LogCleanerManager(logDirs, logs, logDirFailureChannel, 0L) {
     override def allCleanerCheckpoints: Map[TopicPartition, Long] = {
       cleanerCheckpoints.toMap
     }
@@ -297,8 +297,7 @@ class LogCleanerManagerTest extends JUnitSuite with Logging {
   }
 
   /**
-    * When looking for logs with segments ready to be deleted we shouldn't consider
-    * logs that have had their partition marked as uncleanable.
+    * We should find logs with segments ready to be deleted when cleanup.policy=compact
     */
   @Test
   def testLogsWithSegmentsToDeleteShouldNotConsiderUncleanablePartitions(): Unit = {
@@ -308,7 +307,7 @@ class LogCleanerManagerTest extends JUnitSuite with Logging {
     cleanerManager.markPartitionUncleanable(log.dir.getParent, topicPartition)
 
     val readyToDelete = cleanerManager.deletableLogs().size
-    assertEquals("should have 0 logs ready to be deleted", 0, readyToDelete)
+    assertEquals("should have 1 logs ready to be deleted", 1, readyToDelete)
   }
 
   /**
@@ -489,7 +488,7 @@ class LogCleanerManagerTest extends JUnitSuite with Logging {
     if (toMock)
       new LogCleanerManagerMock(Array(logDir), pool, null)
     else
-      new LogCleanerManager(Array(logDir), pool, null)
+      new LogCleanerManager(Array(logDir), pool, null, 0L)
   }
 
   private def createLog(segmentSize: Int, cleanupPolicy: String, segmentsCount: Int = 0): Log = {

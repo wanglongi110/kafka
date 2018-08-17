@@ -119,6 +119,7 @@ abstract class AbstractLogCleanerIntegrationTest {
       logDirs = Array(logDir),
       logs = logMap,
       logDirFailureChannel = new LogDirFailureChannel(1),
+      retentionCheckMs = 0L,
       time = time)
   }
 

@@ -471,7 +471,7 @@ class Log(@volatile var dir: File,
           config,
           time = time,
           fileAlreadyExists = true)
-        
+
         try {
           // Resize the time index file to 0 if it is newly created.
           if (timeIndexFileNewlyCreated)
@@ -481,7 +481,7 @@ class Log(@volatile var dir: File,
             error(s"Could not find index file (offset index exists=$offsetIndexExists, time index exists=$timeIndexExists) corresponding to log file ${segment.log.file.getAbsolutePath}, " +
               "recovering segment and rebuilding index files...")
             recoverSegment(segment)
-          } else if (baseOffset >= recoveryPoint) 
+          } else if (baseOffset >= recoveryPoint)
             // Only sanity check segments above the recovery point
             segment.sanityCheck()
         }
@@ -1582,7 +1582,8 @@ class Log(@volatile var dir: File,
 
   private def deleteLogStartOffsetBreachedSegments(): Int = {
     def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]) =
-      nextSegmentOpt.exists(_.baseOffset <= logStartOffset)
+      nextSegmentOpt.exists(_.baseOffset <= logStartOffset) ||
+        (nextSegmentOpt.isEmpty && logEndOffset == logStartOffset)
 
     deleteOldSegments(shouldDelete, reason = s"log start offset $logStartOffset breach")
   }
