@@ -941,8 +941,6 @@ class Partition(val topicPartition: TopicPartition,
   def deleteRecordsOnLeader(offset: Long): LogDeleteRecordsResult = inReadLock(leaderIsrUpdateLock) {
     leaderReplicaIfLocal match {
       case Some(leaderReplica) =>
-        if (!leaderReplica.log.get.config.delete)
-          throw new PolicyViolationException(s"Records of partition $topicPartition can not be deleted due to the configured policy")
 
         val convertedOffset = if (offset == DeleteRecordsRequest.HIGH_WATERMARK)
           leaderReplica.highWatermark.messageOffset
