@@ -75,7 +75,7 @@ class SSLNetworkClient(config: ConsumerConfig, metadataUpdater: ManualMetadataUp
       config.socketReceiveBufferBytes,
       socketTimeoutMs,
       time,
-      false,
+      true,
       new ApiVersions
     )
   }
