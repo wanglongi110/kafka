@@ -261,9 +261,9 @@ class TopicDeletionManager(controller: KafkaController, eventManager: Controller
     topicsToBeDeleted -= topic
     partitionsToBeDeleted.retain(_.topic != topic)
     val zkUtils = controllerContext.zkUtils
-    zkUtils.transactionalDeletePathRecursive(controllerContext.epochZkVersion, getTopicPath(topic))
-    zkUtils.transactionalDeletePathRecursive(controllerContext.epochZkVersion, getEntityConfigPath(ConfigType.Topic, topic))
-    zkUtils.transactionalDeletePath(controllerContext.epochZkVersion, getDeleteTopicPath(topic))
+    zkUtils.deletePathRecursive(getTopicPath(topic))
+    zkUtils.deletePathRecursive(getEntityConfigPath(ConfigType.Topic, topic))
+    zkUtils.deletePath(getDeleteTopicPath(topic))
     controllerContext.removeTopic(topic)
   }
 

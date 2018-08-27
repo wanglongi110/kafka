@@ -17,7 +17,6 @@
 
 package kafka.utils
 
-import java.util
 import java.util.concurrent.CountDownLatch
 
 import kafka.admin._
@@ -28,15 +27,15 @@ import kafka.consumer.{ConsumerThreadId, TopicCount}
 import kafka.controller.{KafkaController, LeaderIsrAndControllerEpoch, ReassignedPartitionsContext}
 import kafka.server.ConfigType
 import kafka.utils.ZkUtils._
-import org.I0Itec.zkclient.exception._
+import org.I0Itec.zkclient.exception.{ZkBadVersionException, ZkException, ZkMarshallingError, ZkNoNodeException, ZkNodeExistsException}
 import org.I0Itec.zkclient.serialize.ZkSerializer
-import org.I0Itec.zkclient._
+import org.I0Itec.zkclient.{ZkClient, ZkConnection, IZkDataListener, IZkChildListener, IZkStateListener}
 import org.apache.kafka.common.config.ConfigException
 import org.apache.zookeeper.AsyncCallback.{DataCallback, StringCallback}
 import org.apache.zookeeper.KeeperException.Code
 import org.apache.zookeeper.data.{ACL, Stat}
-import org.apache.zookeeper._
-import org.apache.zookeeper.OpResult.SetDataResult
+import org.apache.zookeeper.{CreateMode, KeeperException, ZooDefs, ZooKeeper}
+import kafka.utils.Json._
 
 import scala.collection._
 import scala.collection.JavaConverters._
@@ -528,57 +527,6 @@ class ZkUtils(val zkClient: ZkClient,
   }
 
   /**
-    * Check the check paths given the expected zkVersions and execute the zookeeper operations in a transaction
-    */
-  def transactionalCheckAndExecuteOps(checkPathAndVersions: List[(String, Int)], zkOps: List[Op]) : java.util.List[OpResult] = {
-      val newZkOps = checkPathAndVersions.filter(e => e._1 != null && e._2 != -1).map(e => Op.check(e._1, e._2)) ::: zkOps
-      zkClient.multi(newZkOps.asJava)
-  }
-
-  /**
-    * Check the check paths given the expected zkVersions and execute the zookeeper operations in a transaction
-    */
-  def transactionalCheckAndExecuteOps(checkPath: String, expectedCheckVersion: Int, zkOps: List[Op]) : java.util.List[OpResult] =
-    transactionalCheckAndExecuteOps(List((checkPath, expectedCheckVersion)), zkOps)
-
-  /**
-    * Update the persistent path data after checking zkPaths with expected zkVersions, return (true, newVersion) if the
-    * check paths matches the expected versions and the update succeed, otherwise (the path doesn't
-    * exist, the current version of check path is not the expected version, etc.) return (false, -1).
-    * The check and update will be done in a transactional manner.
-    *
-    * When there is a ConnectionLossException during the conditional update, zkClient will retry the update and may fail
-    * since the previous update may have succeeded (but the stored zkVersion no longer matches the expected one).
-    * In this case, we will run the optionalChecker to further check if the previous write did indeed succeeded.
-    */
-  def conditionalUpdatePersistentPathWithCheckList(updatePath: String, data: String,
-                                                   checkPathAndVersions: List[(String, Int)],
-                                                   optionalChecker:Option[(ZkUtils, String, String) => (Boolean,Int)] = None): (Boolean, Int) = {
-    try {
-      val multiOpResults = transactionalCheckAndExecuteOps(checkPathAndVersions,
-        List(Op.setData(updatePath, ZKStringSerializer.serialize(data), -1)))
-      val stat = multiOpResults.get(multiOpResults.size() - 1).asInstanceOf[SetDataResult].getStat
-      debug(("Transactional update of path %s with value %s succeeded after checking %s, " +
-        "returning the new version: %d")
-        .format(updatePath, data, checkPathAndVersions.mkString("[", ", ", "]"), stat.getVersion))
-      (true, stat.getVersion)
-    } catch {
-      case e1: ZkBadVersionException =>
-        optionalChecker match {
-          case Some(checker) => checker(this, updatePath, data)
-          case _ =>
-            warn("Transactional update of path %s with data %s after checking %s failed due to %s"
-              .format(updatePath, data, checkPathAndVersions.mkString("[", ", ", "]"), e1.getMessage))
-            (false, -1)
-        }
-      case e2: Exception =>
-        warn("Transactional update of path %s with data %s after checking %s failed due to %s".format(updatePath, data,
-          checkPathAndVersions.mkString("[", ", ", "]"), e2.getMessage))
-        (false, -1)
-    }
-  }
-
-  /**
    * Conditional update the persistent path data, return (true, newVersion) if it succeeds, otherwise (the path doesn't
    * exist, the current version is not the expected version, etc.) return (false, -1)
    *
@@ -587,8 +535,28 @@ class ZkUtils(val zkClient: ZkClient,
    * In this case, we will run the optionalChecker to further check if the previous write did indeed succeeded.
    */
   def conditionalUpdatePersistentPath(path: String, data: String, expectVersion: Int,
-    optionalChecker:Option[(ZkUtils, String, String) => (Boolean,Int)] = None): (Boolean, Int) =
-    conditionalUpdatePersistentPathWithCheckList(path, data, List((path, expectVersion)), optionalChecker)
+    optionalChecker:Option[(ZkUtils, String, String) => (Boolean,Int)] = None): (Boolean, Int) = {
+    try {
+      val stat = zkClient.writeDataReturnStat(path, data, expectVersion)
+      debug("Conditional update of path %s with value %s and expected version %d succeeded, returning the new version: %d"
+        .format(path, data, expectVersion, stat.getVersion))
+      (true, stat.getVersion)
+    } catch {
+      case e1: ZkBadVersionException =>
+        optionalChecker match {
+          case Some(checker) => checker(this, path, data)
+          case _ =>
+            debug("Checker method is not passed skipping zkData match")
+            debug("Conditional update of path %s with data %s and expected version %d failed due to %s"
+              .format(path, data,expectVersion, e1.getMessage))
+            (false, -1)
+        }
+      case e2: Exception =>
+        debug("Conditional update of path %s with data %s and expected version %d failed due to %s".format(path, data,
+          expectVersion, e2.getMessage))
+        (false, -1)
+    }
+  }
 
   /**
    * Conditional update the persistent path data, return (true, newVersion) if it succeeds, otherwise (the current
@@ -791,21 +759,20 @@ class ZkUtils(val zkClient: ZkClient,
     }
   }
 
-  def transactionalUpdatePartitionReassignmentData(expectedControllerEpochZkVersion: Int,
-                                                   partitionsToBeReassigned: Map[TopicAndPartition, Seq[Int]]) {
+  def updatePartitionReassignmentData(partitionsToBeReassigned: Map[TopicAndPartition, Seq[Int]]) {
     val zkPath = ZkUtils.ReassignPartitionsPath
     partitionsToBeReassigned.size match {
       case 0 => // need to delete the /admin/reassign_partitions path
-        transactionalDeletePath(expectedControllerEpochZkVersion, zkPath)
+        deletePath(zkPath)
         info("No more partitions need to be reassigned. Deleting zk path %s".format(zkPath))
       case _ =>
         val jsonData = formatAsReassignmentJson(partitionsToBeReassigned)
         try {
-          transactionalUpdatePersistentPath(expectedControllerEpochZkVersion, zkPath, jsonData)
+          updatePersistentPath(zkPath, jsonData)
           debug("Updated partition reassignment path with %s".format(jsonData))
         } catch {
           case _: ZkNoNodeException =>
-            transactionalCreatePersistentPath(expectedControllerEpochZkVersion, zkPath, jsonData)
+            createPersistentPath(zkPath, jsonData)
             debug("Created path %s with %s for partition reassignment".format(zkPath, jsonData))
           case e2: Throwable => throw new AdminOperationException(e2.toString)
         }
@@ -923,122 +890,6 @@ class ZkUtils(val zkClient: ZkClient,
         getChildrenParentMayNotExist(getTopicPartitionsPath(topic)).map(_.toInt).map(TopicAndPartition(topic, _))
       }.toSet
     }
-  }
-
-  /**
-    * Check the /controller_epoch path given the expected zkVersion and delete path recursively in a transaction
-    */
-  def transactionalDeletePathRecursive(expectedControllerEpochZkVersion: Int, deletePath: String): Boolean = {
-    var children: Seq[String] = Seq.empty
-    try
-      children = getChildren(deletePath)
-    catch {
-      case _: ZkNoNodeException => return true
-    }
-    for (subPath <- children) {
-      if (!transactionalDeletePathRecursive(expectedControllerEpochZkVersion, deletePath + "/" + subPath)) return false
-    }
-    return transactionalDeletePath(expectedControllerEpochZkVersion, deletePath)
-  }
-
-  /**
-    * Check the /controller_epoch path given the expected zkVersion and update path in a transaction
-    */
-  def transactionalUpdatePersistentPath(expectedControllerEpochZkVersion: Int, path: String, data: String, acls: java.util.List[ACL] = UseDefaultAcls) = {
-    val acl = if (acls eq UseDefaultAcls) ZkUtils.defaultAcls(isSecure, path) else acls
-    try {
-      transactionalCheckAndExecuteOps(ControllerEpochPath, expectedControllerEpochZkVersion,
-        List(Op.setData(path, ZKStringSerializer.serialize(data), -1)))
-    } catch {
-      case _: ZkNoNodeException =>
-        transactionalCreatePersistentParentPath(expectedControllerEpochZkVersion, path)
-        try {
-          transactionalCreatePersistentPath(expectedControllerEpochZkVersion, path, data, acl)
-        } catch {
-          case _: ZkNodeExistsException =>
-            transactionalCheckAndExecuteOps(ControllerEpochPath, expectedControllerEpochZkVersion,
-              List(Op.setData(path, ZKStringSerializer.serialize(data), -1)))
-        }
-    }
-  }
-
-  /**
-    * Check the /controller_epoch path given the expected zkVersion and delete path in a transaction
-    */
-  def transactionalDeletePath(expectedControllerEpochZkVersion: Int, path: String): Boolean  = {
-    try {
-      transactionalCheckAndExecuteOps(ControllerEpochPath, expectedControllerEpochZkVersion,
-        List(Op.delete(path, -1)))
-    } catch {
-      case _: ZkNoNodeException => return false
-      case e => throw e
-    }
-    true
-  }
-
-
-  /**
-    *  Check the /controller_epoch path given the expected zkVersion and create the paths recursively
-    */
-  private def transactionalCreatePersistentPathRecursive(expectedControllerEpochZkVersion: Int,
-                                                        path: String, acls: java.util.List[ACL] = UseDefaultAcls): Unit = {
-    val acl = if (acls eq UseDefaultAcls) ZkUtils.defaultAcls(isSecure, path) else acls
-    try {
-      transactionalCheckAndExecuteOps(ControllerEpochPath, expectedControllerEpochZkVersion,
-        List(Op.create(path, null, acl, CreateMode.PERSISTENT)))
-    } catch {
-      case _: ZkNodeExistsException =>
-      case _: ZkNoNodeException =>
-        val parentDir = path.substring(0, path.lastIndexOf('/'))
-        if (parentDir.length != 0) {
-          transactionalCreatePersistentPathRecursive(expectedControllerEpochZkVersion, parentDir, acl)
-          transactionalCreatePersistentPathRecursive(expectedControllerEpochZkVersion, path, acl)
-        }
-    }
-  }
-
-  /**
-    *  Check the /controller_epoch path given the expected zkVersion and create the parent paths
-    */
-  private def transactionalCreatePersistentParentPath(expectedControllerEpochZkVersion: Int,
-                                                      path: String, acls: java.util.List[ACL] = UseDefaultAcls): Unit = {
-    val acl = if (acls eq UseDefaultAcls) ZkUtils.defaultAcls(isSecure, path) else acls
-    val parentDir = path.substring(0, path.lastIndexOf('/'))
-    if (parentDir.length != 0) {
-      transactionalCreatePersistentPathRecursive(expectedControllerEpochZkVersion, parentDir, acl)
-    }
-  }
-
-  /**
-    * Check the /controller_epoch path given the expected zkVersion and create persistent path in a transaction
-    */
-  def transactionalCreatePersistentPath(expectedControllerEpochZkVersion: Int, path: String, data: String,
-                                        acls: java.util.List[ACL] = UseDefaultAcls): Unit = {
-    zkPath.checkNamespace()
-    val acl = if (acls eq UseDefaultAcls) ZkUtils.defaultAcls(isSecure, path) else acls
-    try {
-      transactionalCheckAndExecuteOps(ControllerEpochPath, expectedControllerEpochZkVersion,
-        List(Op.create(path, ZKStringSerializer.serialize(data), acl, CreateMode.PERSISTENT)))
-    } catch {
-      case _:ZkNoNodeException =>
-        transactionalCreatePersistentParentPath(expectedControllerEpochZkVersion, path)
-        transactionalCheckAndExecuteOps(ControllerEpochPath, expectedControllerEpochZkVersion,
-          List(Op.create(path, ZKStringSerializer.serialize(data), acl, CreateMode.PERSISTENT)))
-    }
-  }
-
-  /**
-    * Check the /controller_epoch path given the expected zkVersion and delete paths in a transaction
-    */
-  def transactionalDeletePaths(expectedControllerEpochZkVersion: Int, paths: Seq[String]): Boolean = {
-    try {
-      transactionalCheckAndExecuteOps(ControllerEpochPath, expectedControllerEpochZkVersion,
-        paths.map(Op.delete(_, -1)).toList)
-    } catch {
-      case _: ZkNoNodeException => return false
-      case e => throw e
-    }
-    true
   }
 
   @deprecated("This method has been deprecated and will be removed in a future release.", "0.11.0.0")

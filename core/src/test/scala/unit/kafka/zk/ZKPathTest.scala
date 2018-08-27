@@ -127,36 +127,4 @@ class ZKPathTest extends ZooKeeperTestHarness {
     assertTrue("Failed to create persistent path", zkUtils.pathExists(actualPath))
     zkUtils.close()
   }
-
-  @Test
-  def testConditionalUpdatePersistentPathWithCheckList(): Unit = {
-    val updatePath = "/update_path"
-    val checkPath = "/check_path"
-
-    val updateVersion = 0
-    val checkVersion = 0
-
-    val config = new ConsumerConfig(TestUtils.createConsumerProperties(zkConnect, "test", "1"))
-    val zkUtils = ZkUtils(zkConnect, zkSessionTimeoutMs, config.zkConnectionTimeoutMs, false)
-    zkUtils.createPersistentPath(updatePath, "update-0")
-    zkUtils.createPersistentPath(checkPath, "check-0")
-
-    // Update updatePath before modifying checkPath
-    val (updateSucceed, newUpdateVersion) = zkUtils.conditionalUpdatePersistentPathWithCheckList(
-      updatePath, "update-1", List((updatePath, updateVersion), (checkPath, checkVersion)))
-    assertTrue(updateSucceed)
-    assertEquals(updateVersion+1, newUpdateVersion)
-    assertEquals("update-1", zkUtils.readData(updatePath)._1)
-
-    // Update checkPath
-    zkUtils.updatePersistentPath(checkPath, "check-1")
-    assertEquals(checkVersion+1, zkUtils.readData(checkPath)._2.getVersion)
-
-    // Update updatePath after modifying checkPath and specify old checkPath version to check
-    val (succeed, version) = zkUtils.conditionalUpdatePersistentPathWithCheckList(updatePath, "update-2",
-      List((updatePath, updateVersion+1), (checkPath, checkVersion)))
-    assertFalse(succeed)
-    assertEquals(-1, version)
-    zkUtils.close()
-  }
 }

@@ -17,11 +17,14 @@
 
 package kafka.utils
 
-import kafka.controller.{ControllerContext, LeaderIsrAndControllerEpoch}
+import kafka.controller.LeaderIsrAndControllerEpoch
+import kafka.server.{KafkaConfig, ReplicaFetcherManager}
 import kafka.api.LeaderAndIsr
 import kafka.zk.ZooKeeperTestHarness
+import org.apache.kafka.common.TopicPartition
 import org.junit.Assert._
 import org.junit.{Before, Test}
+import org.easymock.EasyMock
 
 
 class ReplicationUtilsTest extends ZooKeeperTestHarness {
@@ -49,77 +52,48 @@ class ReplicationUtilsTest extends ZooKeeperTestHarness {
 
   @Test
   def testUpdateLeaderAndIsr() {
+    val configs = TestUtils.createBrokerConfigs(1, zkConnect).map(KafkaConfig.fromProps)
+    val log = EasyMock.createMock(classOf[kafka.log.Log])
+    EasyMock.expect(log.logEndOffset).andReturn(20).anyTimes()
+    EasyMock.expect(log)
+    EasyMock.replay(log)
+
+    val logManager = EasyMock.createMock(classOf[kafka.log.LogManager])
+    EasyMock.expect(logManager.getLog(new TopicPartition(topic, partitionId))).andReturn(Some(log)).anyTimes()
+    EasyMock.replay(logManager)
+
+    val replicaManager = EasyMock.createMock(classOf[kafka.server.ReplicaManager])
+    EasyMock.expect(replicaManager.config).andReturn(configs.head)
+    EasyMock.expect(replicaManager.logManager).andReturn(logManager)
+    EasyMock.expect(replicaManager.replicaFetcherManager).andReturn(EasyMock.createMock(classOf[ReplicaFetcherManager]))
+    EasyMock.expect(replicaManager.zkUtils).andReturn(zkUtils)
+    EasyMock.replay(replicaManager)
+
     zkUtils.makeSurePersistentPathExists(ZkUtils.IsrChangeNotificationPath)
 
     val replicas = List(0,1)
 
     // regular update
     val newLeaderAndIsr1 = new LeaderAndIsr(brokerId, leaderEpoch, replicas, 0)
-    val (updateSucceeded1,newZkVersion1) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils,
-      "my-topic-test", partitionId, newLeaderAndIsr1, 0, controllerEpoch)
+    val (updateSucceeded1,newZkVersion1) = ReplicationUtils.updateLeaderAndIsr(zkUtils,
+      "my-topic-test", partitionId, newLeaderAndIsr1, controllerEpoch, 0)
     assertTrue(updateSucceeded1)
     assertEquals(newZkVersion1, 1)
 
     // mismatched zkVersion with the same data
     val newLeaderAndIsr2 = new LeaderAndIsr(brokerId, leaderEpoch, replicas, zkVersion + 1)
-    val (updateSucceeded2,newZkVersion2) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils,
-      "my-topic-test", partitionId, newLeaderAndIsr2, zkVersion + 1, controllerEpoch)
+    val (updateSucceeded2,newZkVersion2) = ReplicationUtils.updateLeaderAndIsr(zkUtils,
+      "my-topic-test", partitionId, newLeaderAndIsr2, controllerEpoch, zkVersion + 1)
     assertTrue(updateSucceeded2)
     // returns true with existing zkVersion
     assertEquals(newZkVersion2,1)
 
     // mismatched zkVersion and leaderEpoch
     val newLeaderAndIsr3 = new LeaderAndIsr(brokerId, leaderEpoch + 1, replicas, zkVersion + 1)
-    val (updateSucceeded3,newZkVersion3) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils,
-      "my-topic-test", partitionId, newLeaderAndIsr3, zkVersion + 1, controllerEpoch)
+    val (updateSucceeded3,newZkVersion3) = ReplicationUtils.updateLeaderAndIsr(zkUtils,
+      "my-topic-test", partitionId, newLeaderAndIsr3, controllerEpoch, zkVersion + 1)
     assertFalse(updateSucceeded3)
     assertEquals(newZkVersion3,-1)
-  }
-
-  @Test
-  def testTransactionalUpdateLeaderAndIsr() {
-    zkUtils.makeSurePersistentPathExists(ZkUtils.IsrChangeNotificationPath)
-    zkUtils.makeSurePersistentPathExists(ZkUtils.ControllerEpochPath)
-
-    val replicas = List(0,1)
-    val newReplicas = List(1,2)
-    val controllerContext = new ControllerContext(zkUtils)
-
-    // regular update
-    val newLeaderAndIsr1 = new LeaderAndIsr(brokerId, leaderEpoch, replicas, 0)
-    val (updateSucceeded1,newZkVersion1) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils,
-      "my-topic-test", partitionId, newLeaderAndIsr1, 0, controllerContext.epoch, controllerContext.epochZkVersion)
-    assertTrue(updateSucceeded1)
-    assertEquals(newZkVersion1, 1)
-
-    // mismatched zkVersion with the same data
-    val newLeaderAndIsr2 = new LeaderAndIsr(brokerId, leaderEpoch, replicas, zkVersion + 1)
-    val (updateSucceeded2,newZkVersion2) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils,
-      "my-topic-test", partitionId, newLeaderAndIsr2, zkVersion + 1, controllerContext.epoch, controllerContext.epochZkVersion)
-    assertTrue(updateSucceeded2)
-    // returns true with existing zkVersion
-    assertEquals(newZkVersion2, 1)
-
-    // Increment controller epoch
-    val newControllerEpoch = controllerContext.epoch + 1
-    val (updateSucceeded, newVersion) = zkUtils.conditionalUpdatePersistentPathIfExists(
-      ZkUtils.ControllerEpochPath, newControllerEpoch.toString, controllerContext.epochZkVersion)
-    assertTrue(updateSucceeded)
-    assertEquals(1, newVersion)
-
-    // Update LeaderAndIsr in zk using old controller epoch
-    val newLeaderAndIsr3 = new LeaderAndIsr(brokerId, leaderEpoch + 1, newReplicas, zkVersion + 1)
-    val (updateSucceeded3,newZkVersion3) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils,
-      "my-topic-test", partitionId, newLeaderAndIsr3, zkVersion + 1, controllerContext.epoch, controllerContext.epochZkVersion)
-    assertFalse(updateSucceeded3)
-    assertEquals(newZkVersion3,-1)
-
-    // The LeaderAndIsr should not be updated by the old controller
-    val leaderAndIsrData = zkUtils.getLeaderAndIsrForPartition("my-topic-test", partitionId)
-    assertEquals(leaderEpoch, leaderAndIsrData.get.leaderEpoch)
-    assertEquals(replicas, leaderAndIsrData.get.isr)
-    assertEquals(brokerId, leaderAndIsrData.get.leader)
-    assertEquals(zkVersion, leaderAndIsrData.get.zkVersion)
   }
 
   @Test

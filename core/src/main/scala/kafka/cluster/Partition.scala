@@ -562,8 +562,8 @@ class Partition(val topic: String,
 
   private def updateIsr(newIsr: Set[Replica]) {
     val newLeaderAndIsr = new LeaderAndIsr(localBrokerId, leaderEpoch, newIsr.map(_.brokerId).toList, zkVersion)
-    val (updateSucceeded,newVersion) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils, topic, partitionId,
-      newLeaderAndIsr, zkVersion, controllerEpoch)
+    val (updateSucceeded,newVersion) = ReplicationUtils.updateLeaderAndIsr(zkUtils, topic, partitionId,
+      newLeaderAndIsr, controllerEpoch, zkVersion)
 
     if(updateSucceeded) {
       replicaManager.recordIsrChange(topicPartition)

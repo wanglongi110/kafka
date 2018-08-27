@@ -20,7 +20,7 @@ import kafka.api.LeaderAndIsr
 import kafka.common.{LeaderElectionNotNeededException, NoReplicaOnlineException, StateChangeFailedException, TopicAndPartition}
 import kafka.controller.Callbacks.CallbackBuilder
 import kafka.utils.ZkUtils._
-import kafka.utils.{Logging, ReplicationUtils, ZkUtils}
+import kafka.utils.{Logging, ReplicationUtils}
 import org.I0Itec.zkclient.exception.ZkNodeExistsException
 
 import scala.collection._
@@ -252,9 +252,10 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
         debug(s"Initializing leader and isr for partition $topicAndPartition to $leaderIsrAndControllerEpoch")
 
         try {
-          zkUtils.transactionalCreatePersistentPath(controllerContext.epochZkVersion,
+          zkUtils.createPersistentPath(
             getTopicPartitionLeaderAndIsrPath(topicAndPartition.topic, topicAndPartition.partition),
-            zkUtils.leaderAndIsrZkData(leaderAndIsr, controller.epoch))
+            zkUtils.leaderAndIsrZkData(leaderAndIsr, controller.epoch)
+          )
           // NOTE: the above write can fail only if the current controller lost its zk session and the new controller
           // took over and initialized this partition. This can happen if the current controller went into a long
           // GC pause
@@ -279,7 +280,6 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
             stateChangeLogger.error(failMsg)
             throw new StateChangeFailedException(failMsg)
         }
-
     }
   }
 
@@ -313,8 +313,8 @@ class PartitionStateMachine(controller: KafkaController) extends Logging {
         }
         // elect new leader or throw exception
         val (leaderAndIsr, replicas) = leaderSelector.selectLeader(topicAndPartition, currentLeaderAndIsr)
-        val (updateSucceeded, newVersion) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils, topic, partition,
-          leaderAndIsr, currentLeaderAndIsr.zkVersion, controllerContext.epoch, controllerContext.epochZkVersion)
+        val (updateSucceeded, newVersion) = ReplicationUtils.updateLeaderAndIsr(zkUtils, topic, partition,
+          leaderAndIsr, controller.epoch, currentLeaderAndIsr.zkVersion)
         newLeaderAndIsr = leaderAndIsr.withZkVersion(newVersion)
         zookeeperPathUpdateSucceeded = updateSucceeded
         replicasForThisPartition = replicas

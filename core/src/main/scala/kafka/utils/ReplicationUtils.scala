@@ -18,7 +18,7 @@
 package kafka.utils
 
 import kafka.api.LeaderAndIsr
-import kafka.controller.{ControllerContext, IsrChangeNotificationListener, LeaderIsrAndControllerEpoch}
+import kafka.controller.{IsrChangeNotificationListener, LeaderIsrAndControllerEpoch}
 import kafka.utils.ZkUtils._
 import org.apache.kafka.common.TopicPartition
 import org.apache.zookeeper.data.Stat
@@ -29,16 +29,13 @@ object ReplicationUtils extends Logging {
 
   private val IsrChangeNotificationPrefix = "isr_change_"
 
-  def transactionalUpdateLeaderAndIsr(zkUtils: ZkUtils, topic: String, partitionId: Int, newLeaderAndIsr: LeaderAndIsr,
-                                      zkVersion: Int, controllerEpoch: Int, controllerEpochZkVersion: Int = -1): (Boolean,Int) = {
+  def updateLeaderAndIsr(zkUtils: ZkUtils, topic: String, partitionId: Int, newLeaderAndIsr: LeaderAndIsr, controllerEpoch: Int,
+    zkVersion: Int): (Boolean,Int) = {
+    debug(s"Updated ISR for $topic-$partitionId to ${newLeaderAndIsr.isr.mkString(",")}")
     val path = getTopicPartitionLeaderAndIsrPath(topic, partitionId)
-    val checkPathAndVersions = List((path, zkVersion), (ZkUtils.ControllerEpochPath, controllerEpochZkVersion))
-    debug(s"Updated ISR for $topic-$partitionId to ${newLeaderAndIsr.isr.mkString(",")} after checking ${
-      checkPathAndVersions.mkString("[", ", ", "]")}")
     val newLeaderData = zkUtils.leaderAndIsrZkData(newLeaderAndIsr, controllerEpoch)
     // use the epoch of the controller that made the leadership decision, instead of the current controller epoch
-    val updatePersistentPath: (Boolean, Int) = zkUtils.conditionalUpdatePersistentPathWithCheckList(
-      path, newLeaderData, checkPathAndVersions, Some(checkLeaderAndIsrZkData))
+    val updatePersistentPath: (Boolean, Int) = zkUtils.conditionalUpdatePersistentPath(path, newLeaderData, zkVersion, Some(checkLeaderAndIsrZkData))
     updatePersistentPath
   }
 
