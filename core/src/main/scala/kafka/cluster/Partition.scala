@@ -67,7 +67,7 @@ class Partition(val topic: String,
    * the controller sends it a start replica command containing the leader for each partition that the broker hosts.
    * In addition to the leader, the controller can also send the epoch of the controller that elected the leader for
    * each partition. */
-  private var controllerEpoch: Int = KafkaController.InitialControllerEpoch - 1
+  private var controllerEpoch: Int = KafkaController.InitialControllerEpoch
   this.logIdent = "Partition [%s,%d] on broker %d: ".format(topic, partitionId, localBrokerId)
 
   private def isReplicaLocal(replicaId: Int) : Boolean = replicaId == localBrokerId
@@ -562,8 +562,8 @@ class Partition(val topic: String,
 
   private def updateIsr(newIsr: Set[Replica]) {
     val newLeaderAndIsr = new LeaderAndIsr(localBrokerId, leaderEpoch, newIsr.map(_.brokerId).toList, zkVersion)
-    val (updateSucceeded,newVersion) = ReplicationUtils.updateLeaderAndIsr(zkUtils, topic, partitionId,
-      newLeaderAndIsr, controllerEpoch, zkVersion)
+    val (updateSucceeded,newVersion) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils, topic, partitionId,
+      newLeaderAndIsr, zkVersion, controllerEpoch)
 
     if(updateSucceeded) {
       replicaManager.recordIsrChange(topicPartition)

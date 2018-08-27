@@ -19,6 +19,7 @@ package kafka.controller
 import kafka.common.{StateChangeFailedException, TopicAndPartition}
 import kafka.controller.Callbacks.CallbackBuilder
 import kafka.utils.{Logging, ReplicationUtils}
+import org.apache.kafka.common.errors.ControllerMovedException
 
 import scala.collection._
 
@@ -88,6 +89,9 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
         replicas.foreach(r => handleStateChange(r, targetState, callbacks))
         brokerRequestBatch.sendRequestsToBrokers(controller.epoch)
       } catch {
+        case e: ControllerMovedException =>
+          error("Error while moving some replicas to %s state because controller moved to another broker".format(targetState), e)
+          throw e
         case e: Throwable => error("Error while moving some replicas to %s state".format(targetState), e)
       }
     }
@@ -243,6 +247,10 @@ class ReplicaStateMachine(controller: KafkaController) extends Logging {
       }
     }
     catch {
+      case e: ControllerMovedException =>
+        stateChangeLogger.error(("Controller %d epoch %d initiated state change of replica %d for partition [%s,%d] from %s to %s failed " +
+          "because controller moved to another broker").format(controllerId, controller.epoch, replicaId, topic, partition, currState, targetState), e)
+        throw e
       case t: Throwable =>
         stateChangeLogger.error("Controller %d epoch %d initiated state change of replica %d for partition [%s,%d] from %s to %s failed"
                                   .format(controllerId, controller.epoch, replicaId, topic, partition, currState, targetState), t)

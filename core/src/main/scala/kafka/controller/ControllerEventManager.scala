@@ -18,22 +18,26 @@
 package kafka.controller
 
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.locks.ReentrantLock
 
 import scala.collection._
-
 import kafka.metrics.KafkaTimer
+import kafka.utils.CoreUtils.inLock
 import kafka.utils.ShutdownableThread
+import org.apache.kafka.common.errors.ControllerMovedException
 
 object ControllerEventManager {
   val ControllerEventThreadName = "controller-event-thread"
 }
 class ControllerEventManager(rateAndTimeMetrics: Map[ControllerState, KafkaTimer],
-                             eventProcessedListener: ControllerEvent => Unit) {
+                             eventProcessedListener: ControllerEvent => Unit,
+                             controllerMovedListener: () => Unit) {
 
   @volatile private var _state: ControllerState = ControllerState.Idle
 
   private val queue = new LinkedBlockingQueue[ControllerEvent]
-  private val thread = new ControllerEventThread(ControllerEventManager.ControllerEventThreadName)
+  // Visible for testing
+  private[controller] val thread = new ControllerEventThread(ControllerEventManager.ControllerEventThreadName)
 
   def state: ControllerState = _state
 
@@ -53,6 +57,9 @@ class ControllerEventManager(rateAndTimeMetrics: Map[ControllerState, KafkaTimer
           controllerEvent.process()
         }
       } catch {
+        case e: ControllerMovedException =>
+          info(s"Controller moved to another broker when processing $controllerEvent.", e)
+          controllerMovedListener()
         case e: Throwable => error(s"Error processing event $controllerEvent", e)
       }
 

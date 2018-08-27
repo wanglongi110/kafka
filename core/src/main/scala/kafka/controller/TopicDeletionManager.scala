@@ -93,7 +93,7 @@ class TopicDeletionManager(controller: KafkaController, eventManager: Controller
       for (topic <- initialTopicsToBeDeleted) {
         val deleteTopicPath = getDeleteTopicPath(topic)
         info("Removing " + deleteTopicPath + " since delete topic is disabled")
-        zkUtils.deletePath(deleteTopicPath)
+        zkUtils.transactionalDeletePath(controllerContext.epochZkVersion, deleteTopicPath)
       }
     }
   }
@@ -261,9 +261,9 @@ class TopicDeletionManager(controller: KafkaController, eventManager: Controller
     topicsToBeDeleted -= topic
     partitionsToBeDeleted.retain(_.topic != topic)
     val zkUtils = controllerContext.zkUtils
-    zkUtils.deletePathRecursive(getTopicPath(topic))
-    zkUtils.deletePathRecursive(getEntityConfigPath(ConfigType.Topic, topic))
-    zkUtils.deletePath(getDeleteTopicPath(topic))
+    zkUtils.transactionalDeletePathRecursive(controllerContext.epochZkVersion, getTopicPath(topic))
+    zkUtils.transactionalDeletePathRecursive(controllerContext.epochZkVersion, getEntityConfigPath(ConfigType.Topic, topic))
+    zkUtils.transactionalDeletePath(controllerContext.epochZkVersion, getDeleteTopicPath(topic))
     controllerContext.removeTopic(topic)
   }
 

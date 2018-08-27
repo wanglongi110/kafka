@@ -19,8 +19,13 @@ package kafka.utils
 
 import kafka.common.TopicAndPartition
 import kafka.zk.ZooKeeperTestHarness
+import org.I0Itec.zkclient.exception.ZkException
+import org.apache.kafka.common.errors.ControllerMovedException
 import org.junit.Assert._
 import org.junit.Test
+
+import scala.collection._
+
 
 class ZkUtilsTest extends ZooKeeperTestHarness {
 
@@ -83,5 +88,83 @@ class ZkUtilsTest extends ZooKeeperTestHarness {
     zkUtils.createPersistentPath(ZkUtils.getTopicPath("nopartitions"))
 
     assertEquals(Set(TopicAndPartition(topic, 0)), zkUtils.getAllPartitions())
+  }
+
+  @Test
+  def testCheckAndDeleteMultiOps() {
+    val checkVersion = 0
+    val deletePath = "/delete/state"
+    zkUtils.createPersistentPath(ZkUtils.ControllerEpochPath, "somedata")
+    zkUtils.makeSurePersistentPathExists(deletePath)
+
+    intercept[ControllerMovedException](zkUtils.transactionalDeletePath(checkVersion + 1, deletePath))
+
+    assertTrue(zkUtils.pathExists(deletePath))
+
+    zkUtils.transactionalDeletePath(checkVersion, deletePath)
+
+    assertFalse(zkUtils.pathExists(deletePath))
+  }
+
+  @Test
+  def testCheckAndDeleteRecursiveMultiOps() {
+    val checkVersion = 0
+    val deletePaths = Seq(
+      "/delete/state",
+      "/delete/state/child-1",
+      "/delete/state/child-2",
+      "/delete/state/child-1/grandchild-1",
+      "/delete/state/child-1/grandchild-2")
+    zkUtils.createPersistentPath(ZkUtils.ControllerEpochPath, "somedata")
+    deletePaths.foreach(zkUtils.makeSurePersistentPathExists(_))
+
+    intercept[ControllerMovedException](zkUtils.transactionalDeletePathRecursive(checkVersion+1, deletePaths.head))
+
+    // Delete path (non-recursive) should fail if there are children znodes
+    var fail = false
+    try {
+      zkUtils.transactionalDeletePath(checkVersion, deletePaths.head)
+    } catch {
+      case _: ZkException => fail = true
+    }
+    assertTrue(fail)
+
+    deletePaths.foreach(e => assertTrue(zkUtils.pathExists(e)))
+
+    zkUtils.transactionalDeletePathRecursive(checkVersion, deletePaths.head)
+
+    deletePaths.foreach(e => assertFalse(zkUtils.pathExists(e)))
+  }
+
+  @Test
+  def testCheckAndUpdateMultiOps() {
+    val checkVersion = 0
+    var fail = false
+    val updatePath = "/delete/state"
+    zkUtils.createPersistentPath(ZkUtils.ControllerEpochPath, "somedata")
+    zkUtils.createPersistentPath(updatePath, "somedata")
+
+    intercept[ControllerMovedException](zkUtils.transactionalUpdatePersistentPath(checkVersion+1, updatePath, "somedata-2"))
+
+    assertEquals("somedata", zkUtils.readData(updatePath)._1)
+
+    zkUtils.transactionalUpdatePersistentPath(checkVersion, updatePath, "somedata-2")
+
+    assertEquals("somedata-2", zkUtils.readData(updatePath)._1)
+  }
+
+  @Test
+  def testCheckAndCreateMultiOps() {
+    val checkVersion = 0
+    val createPath = "/delete/a/b/c/state"
+    zkUtils.createPersistentPath(ZkUtils.ControllerEpochPath, "somedata")
+
+    intercept[ControllerMovedException](zkUtils.transactionalCreatePersistentPath(checkVersion+1, createPath, "somedata"))
+
+    assertFalse(zkUtils.pathExists(createPath))
+
+    zkUtils.transactionalCreatePersistentPath(checkVersion, createPath, "somedata")
+
+    assertEquals("somedata", zkUtils.readData(ZkUtils.ControllerEpochPath)._1)
   }
 }

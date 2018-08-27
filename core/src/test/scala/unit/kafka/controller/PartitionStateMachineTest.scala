@@ -34,6 +34,8 @@ class PartitionStateMachineTest extends ZooKeeperTestHarness {
   def testUpdatingOfflinePartitionsCount() = {
     val props = KafkaConfig.fromProps(TestUtils.createBrokerConfig(0, zkConnect))
     var controller = new KafkaController(props, zkUtils, new MockTime(), new Metrics())
+    zkUtils.createPersistentPath(ZkUtils.ControllerEpochPath, KafkaController.InitialControllerEpoch.toString)
+
     var partitionStateMachine = new PartitionStateMachine(controller)
 
     val partitionIds = Set(0, 1, 2, 3)
@@ -49,8 +51,8 @@ class PartitionStateMachineTest extends ZooKeeperTestHarness {
       */
     partitions.foreach { partition =>
       zkUtils.createPersistentPath(ZkUtils.getTopicPartitionLeaderAndIsrPath(topic, partition.partition))
-      val (updateSucceed, newZkVersion) = ReplicationUtils.updateLeaderAndIsr(zkUtils, topic, partition.partition,
-        new LeaderAndIsr(0, 0, List(0, 1, 2), 0), controller.epoch, 0)
+      val (updateSucceed, newZkVersion) = ReplicationUtils.transactionalUpdateLeaderAndIsr(zkUtils, topic, partition.partition,
+        new LeaderAndIsr(0, 0, List(0, 1, 2), 0), 0, controller.epoch)
     }
     partitionStateMachine.handleStateChanges(partitions, OnlinePartition)
     assertEquals(s"There should be no offline partition(s)", 0, partitionStateMachine.offlinePartitionCount)
