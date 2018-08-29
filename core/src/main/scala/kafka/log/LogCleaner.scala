@@ -34,7 +34,7 @@ import org.apache.kafka.common.errors.KafkaStorageException
 import org.apache.kafka.common.record.MemoryRecords.RecordFilter
 import org.apache.kafka.common.record.MemoryRecords.RecordFilter.BatchRetention
 
-import scala.collection.mutable
+import scala.collection.{Iterable, mutable}
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ListBuffer
 
@@ -188,10 +188,10 @@ class LogCleaner(val config: CleanerConfig,
   }
 
   /**
-   *  Resume the cleaning of a paused partition. This call blocks until the cleaning of a partition is resumed.
-   */
-  def resumeCleaning(topicPartition: TopicPartition) {
-    cleanerManager.resumeCleaning(topicPartition)
+    *  Resume the cleaning of paused partitions.
+    */
+  def resumeCleaning(topicPartitions: Iterable[TopicPartition]) {
+    cleanerManager.resumeCleaning(topicPartitions)
   }
 
   /**
@@ -213,6 +213,15 @@ class LogCleaner(val config: CleanerConfig,
       remainingWaitMs -= sleepTime
     }
     isCleaned
+  }
+
+  /**
+    * To prevent race between retention and compaction,
+    * retention threads need to make this call to obtain:
+    * @return A list of log partitions that retention threads can safely work on
+    */
+  def pauseCleaningForNonCompactedPartitions(): Iterable[(TopicPartition, Log)] = {
+    cleanerManager.pauseCleaningForNonCompactedPartitions()
   }
 
   /**
@@ -285,13 +294,13 @@ class LogCleaner(val config: CleanerConfig,
           true
       }
       val deletable: Iterable[(TopicPartition, Log)] = cleanerManager.deletableLogs()
-      deletable.foreach{
-        case (topicPartition, log) =>
-          try {
+      try {
+        deletable.foreach {
+          case (_, log) =>
             log.deleteOldSegments()
-          } finally {
-            cleanerManager.doneDeleting(topicPartition)
-          }
+        }
+      } finally {
+        cleanerManager.doneDeleting(deletable.map(_._1))
       }
       if (!cleaned)
         backOffWaitLatch.await(config.backOffMs, TimeUnit.MILLISECONDS)

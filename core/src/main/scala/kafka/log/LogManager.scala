@@ -587,8 +587,10 @@ class LogManager(logDirs: Array[File],
           if (needToStopCleaner)
             cleaner.maybeTruncateCheckpoint(log.dir.getParentFile, topicPartition, log.activeSegment.baseOffset)
         } finally {
-          if (needToStopCleaner)
-            cleaner.resumeCleaning(topicPartition)
+          if (needToStopCleaner) {
+            cleaner.resumeCleaning(Seq(topicPartition))
+            info(s"Compaction for partition $topicPartition is resumed")
+          }
         }
       }
     }
@@ -614,7 +616,8 @@ class LogManager(logDirs: Array[File],
       log.truncateFullyAndStartAt(newOffset)
       if (cleaner != null) {
         cleaner.maybeTruncateCheckpoint(log.dir.getParentFile, topicPartition, log.activeSegment.baseOffset)
-        cleaner.resumeCleaning(topicPartition)
+        cleaner.resumeCleaning(Seq(topicPartition))
+        info(s"Compaction for partition $topicPartition is resumed")
       }
     }
     checkpointLogRecoveryOffsets()
@@ -829,10 +832,28 @@ class LogManager(logDirs: Array[File],
     debug("Beginning log cleanup...")
     var total = 0
     val startMs = time.milliseconds
-    for(log <- allLogs; if !log.config.compact) {
-      debug("Garbage collecting '" + log.name + "'")
-      total += log.deleteOldSegments()
+    val deletableLogs = {
+      if (cleaner != null) {
+        cleaner.pauseCleaningForNonCompactedPartitions()
+      } else {
+        logs.filter {
+          case (_, log) => !log.config.compact
+        }
+      }
     }
+
+    try {
+      deletableLogs.foreach {
+        case (_, log) =>
+          debug("Garbage collecting '" + log.name + "'")
+          total += log.deleteOldSegments()
+      }
+    } finally {
+      if (cleaner != null) {
+        cleaner.resumeCleaning(deletableLogs.map(_._1))
+      }
+    }
+
     debug("Log cleanup completed. " + total + " files deleted in " +
                   (time.milliseconds - startMs) / 1000 + " seconds")
   }
