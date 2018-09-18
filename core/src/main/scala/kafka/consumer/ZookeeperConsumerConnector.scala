@@ -100,7 +100,7 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
   private val topicThreadIdAndQueues = new Pool[(String, ConsumerThreadId), BlockingQueue[FetchedDataChunk]]
   private val scheduler = new KafkaScheduler(threads = 1, threadNamePrefix = "kafka-consumer-scheduler-")
   private val messageStreamCreated = new AtomicBoolean(false)
-  private var lastCommittedPartitionsAndOffsets: immutable.Map[TopicAndPartition, OffsetAndMetadata] = null
+  @volatile private var lastCommittedPartitionsAndOffsets: immutable.Map[TopicAndPartition, OffsetAndMetadata] = null
 
   private var sessionExpirationListener: ZKSessionExpireListener = null
   private var topicPartitionChangeListener: ZKTopicPartitionChangeListener = null
