@@ -37,7 +37,7 @@ import scala.collection.{Iterable, immutable, mutable}
 private[log] sealed trait LogCleaningState
 private[log] case object LogCleaningInProgress extends LogCleaningState
 private[log] case object LogCleaningAborted extends LogCleaningState
-private[log] case object LogCleaningPaused extends LogCleaningState
+private[log] case class LogCleaningPaused(times: Int) extends LogCleaningState
 
 /**
  *  Manage the state of each partition being cleaned.
@@ -167,7 +167,7 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
       }
 
       deletableLogs.foreach {
-        case (topicPartition, _) => inProgress.put(topicPartition, LogCleaningPaused)
+        case (topicPartition, _) => inProgress.put(topicPartition, LogCleaningPaused(1))
       }
       deletableLogs
     }
@@ -214,21 +214,26 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
    *     throws a LogCleaningAbortedException to stop the cleaning task.
    *  4. When the cleaning task is stopped, doneCleaning() is called, which sets the state of the partition as paused.
    *  5. abortAndPauseCleaning() waits until the state of the partition is changed to paused.
+   *  6. If the partition is already paused (by log retention), a new call to this function
+   *     will increase the paused count by one.
    */
   def abortAndPauseCleaning(topicPartition: TopicPartition) {
     inLock(lock) {
       inProgress.get(topicPartition) match {
         case None =>
-          inProgress.put(topicPartition, LogCleaningPaused)
+          inProgress.put(topicPartition, LogCleaningPaused(1))
         case Some(state) =>
           state match {
             case LogCleaningInProgress =>
               inProgress.put(topicPartition, LogCleaningAborted)
+            case LogCleaningPaused(count) =>
+              inProgress.put(topicPartition, LogCleaningPaused(count + 1))
             case s =>
               throw new IllegalStateException(s"Compaction for partition $topicPartition cannot be aborted and paused since it is in $s state.")
           }
       }
-      while (!isCleaningInState(topicPartition, LogCleaningPaused))
+
+      while(!checkCleaningPaused(topicPartition))
         pausedCleaningCond.await(100, TimeUnit.MILLISECONDS)
     }
     info(s"The cleaning for partition $topicPartition is aborted and paused")
@@ -236,6 +241,9 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
 
   /**
     *  Resume the cleaning of paused partitions.
+    *  If the partition is paused by log retention and then paused again by
+    *  topic deletion or truncation, each call of this function will undo
+    *  one pause.
     */
   def resumeCleaning(topicPartitions: Iterable[TopicPartition]){
     inLock(lock) {
@@ -246,8 +254,13 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
               throw new IllegalStateException(s"Compaction for partition $topicPartition cannot be resumed since it is not paused.")
             case Some(state) =>
               state match {
-                case LogCleaningPaused =>
-                  inProgress.remove(topicPartition)
+                case LogCleaningPaused(count) =>
+                  if (count == 1)
+                    inProgress.remove(topicPartition)
+                  else if (count > 1)
+                    inProgress.put(topicPartition, LogCleaningPaused(count - 1))
+                  else
+                    throw new IllegalStateException(s"Compaction for partition $topicPartition cannot be resumed since it is in paused count = $count state.")
                 case s =>
                   throw new IllegalStateException(s"Compaction for partition $topicPartition cannot be resumed since it is in $s state.")
               }
@@ -267,6 +280,22 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
           true
         else
           false
+    }
+  }
+
+/**
+  *  Check if the cleaning for a partition is paused. The caller is expected to hold lock while making the call.
+  */
+ private def checkCleaningPaused(topicPartition: TopicPartition): Boolean = {
+    inProgress.get(topicPartition) match {
+      case None => false
+      case Some(state) =>
+        state match {
+          case LogCleaningPaused(s) =>
+            true
+          case _ =>
+            false
+        }
     }
   }
 
@@ -325,7 +354,7 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
           updateCheckpoints(dataDir, Option(topicPartition, endOffset))
           inProgress.remove(topicPartition)
         case Some(LogCleaningAborted) =>
-          inProgress.put(topicPartition, LogCleaningPaused)
+          inProgress.put(topicPartition, LogCleaningPaused(1))
           pausedCleaningCond.signalAll()
         case s =>
           throw new IllegalStateException(s"In-progress partition $topicPartition cannot be in $s state.")
@@ -341,7 +370,7 @@ private[log] class LogCleanerManager(val logDirs: Array[File],
             case Some(LogCleaningInProgress) =>
               inProgress.remove(topicPartition)
             case Some(LogCleaningAborted) =>
-              inProgress.put(topicPartition, LogCleaningPaused)
+              inProgress.put(topicPartition, LogCleaningPaused(1))
               pausedCleaningCond.signalAll()
             case s =>
               throw new IllegalStateException(s"In-progress partition $topicPartition cannot be in $s state.")

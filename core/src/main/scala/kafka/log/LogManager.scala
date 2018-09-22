@@ -613,11 +613,16 @@ class LogManager(logDirs: Array[File],
         //Abort and pause the cleaning of the log, and resume after truncation is done.
       if (cleaner != null)
         cleaner.abortAndPauseCleaning(topicPartition)
-      log.truncateFullyAndStartAt(newOffset)
-      if (cleaner != null) {
-        cleaner.maybeTruncateCheckpoint(log.dir.getParentFile, topicPartition, log.activeSegment.baseOffset)
-        cleaner.resumeCleaning(Seq(topicPartition))
-        info(s"Compaction for partition $topicPartition is resumed")
+      try {
+        log.truncateFullyAndStartAt(newOffset)
+        if (cleaner != null) {
+          cleaner.maybeTruncateCheckpoint(log.dir.getParentFile, topicPartition, log.activeSegment.baseOffset)
+        }
+      } finally {
+        if (cleaner != null) {
+          cleaner.resumeCleaning(Seq(topicPartition))
+          info(s"Compaction for partition $topicPartition is resumed")
+        }
       }
     }
     checkpointLogRecoveryOffsets()
