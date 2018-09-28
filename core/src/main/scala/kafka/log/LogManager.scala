@@ -526,7 +526,7 @@ class LogManager(logDirs: Seq[File],
     }
 
     for ((dir, logs) <- affectedLogs.groupBy(_.dir.getParentFile)) {
-      checkpointRecoveryOffsetsAndCleanSnapshot(dir, logs)
+      checkpointRecoveryOffsetsAndCleanSnapshot(dir, ArrayBuffer.empty)
     }
   }
 
