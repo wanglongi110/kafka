@@ -407,6 +407,7 @@ abstract class AbstractFetcherThread(name: String,
         partitionStates.updateAndMoveToEnd(tp, updatedState)
       }
 
+      maybeUpdateIdleFlag()
       partitionMapCond.signalAll()
     } finally partitionMapLock.unlock()
   }
@@ -431,6 +432,7 @@ abstract class AbstractFetcherThread(name: String,
         (state.topicPartition, maybeTruncationComplete)
       }.toMap
     partitionStates.set(newStates.asJava)
+    maybeUpdateIdleFlag()
   }
 
   /**
@@ -612,7 +614,7 @@ abstract class AbstractFetcherThread(name: String,
         partitionStates.remove(topicPartition)
         fetcherLagStats.unregister(topicPartition)
       }
-      idle = partitionStates.size() <= 0
+      maybeUpdateIdleFlag()
     } finally partitionMapLock.unlock()
   }
 
@@ -638,6 +640,11 @@ abstract class AbstractFetcherThread(name: String,
         r.readInto(buffer, 0)
         MemoryRecords.readableRecords(buffer)
     }
+  }
+
+  // This method should only be called when holding the partitionMapLock
+  private def maybeUpdateIdleFlag(): Unit = {
+    idle = partitionStates.size() <= 0
   }
 
 }
