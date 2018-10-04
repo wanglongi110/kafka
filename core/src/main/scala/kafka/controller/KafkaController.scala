@@ -105,7 +105,6 @@ class KafkaController(val config: KafkaConfig,
 
   @volatile private var activeControllerId = -1
   @volatile private var offlinePartitionCount = 0
-  @volatile private var preferredReplicaImbalanceCount = 0
   @volatile private var globalTopicCount = 0
   @volatile private var globalPartitionCount = 0
 
@@ -123,13 +122,6 @@ class KafkaController(val config: KafkaConfig,
     "OfflinePartitionsCount",
     new Gauge[Int] {
       def value: Int = offlinePartitionCount
-    }
-  )
-
-  newGauge(
-    "PreferredReplicaImbalanceCount",
-    new Gauge[Int] {
-      def value: Int = preferredReplicaImbalanceCount
     }
   )
 
@@ -311,7 +303,6 @@ class KafkaController(val config: KafkaConfig,
     // shutdown leader rebalance scheduler
     kafkaScheduler.shutdown()
     offlinePartitionCount = 0
-    preferredReplicaImbalanceCount = 0
     globalTopicCount = 0
     globalPartitionCount = 0
 
@@ -1149,19 +1140,6 @@ class KafkaController(val config: KafkaConfig,
         0
       } else {
         controllerContext.offlinePartitionCount
-      }
-
-    preferredReplicaImbalanceCount =
-      if (!isActive) {
-        0
-      } else {
-        controllerContext.allPartitions.count { topicPartition =>
-          val replicas = controllerContext.partitionReplicaAssignment(topicPartition)
-          val preferredReplica = replicas.head
-          val leadershipInfo = controllerContext.partitionLeadershipInfo.get(topicPartition)
-          leadershipInfo.map(_.leaderAndIsr.leader != preferredReplica).getOrElse(false) &&
-            !topicDeletionManager.isTopicQueuedUpForDeletion(topicPartition.topic)
-        }
       }
 
     globalTopicCount = if (!isActive) 0 else controllerContext.allTopics.size
