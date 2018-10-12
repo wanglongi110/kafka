@@ -81,6 +81,7 @@ object BrokerCompressionTest {
   def parameters: Collection[Array[String]] = {
     (for (brokerCompression <- BrokerCompressionCodec.brokerCompressionOptions;
          messageCompression <- CompressionType.values
+      if messageCompression != CompressionType.PASSTHROUGH
     ) yield Array(messageCompression.name, brokerCompression)).asJava
   }
 }
