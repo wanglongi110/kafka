@@ -1611,6 +1611,7 @@ public class KafkaConsumerTest {
         int fetchSize = 1024 * 1024;
         int maxPollRecords = Integer.MAX_VALUE;
         boolean checkCrcs = true;
+        boolean usePassthrough = false;
 
         Deserializer<String> keyDeserializer = new StringDeserializer();
         Deserializer<String> valueDeserializer = new StringDeserializer();
@@ -1655,6 +1656,7 @@ public class KafkaConsumerTest {
                 fetchSize,
                 maxPollRecords,
                 checkCrcs,
+                usePassthrough,
                 keyDeserializer,
                 valueDeserializer,
                 metadata,

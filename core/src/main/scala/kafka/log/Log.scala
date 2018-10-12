@@ -989,9 +989,6 @@ class Log(@volatile var dir: File,
     var offsetOfMaxTimestamp = -1L
 
     for (batch <- records.batches.asScala) {
-      // we only validate V2 and higher to avoid potential compatibility issues with older clients
-      if (batch.magic >= RecordBatch.MAGIC_VALUE_V2 && isFromClient && batch.baseOffset != 0)
-        throw new InvalidRecordException(s"The baseOffset of the record batch should be 0, but it is ${batch.baseOffset}")
 
       // update the first offset if on the first message. For magic versions older than 2, we use the last offset
       // to avoid the need to decompress the data (the last offset can be obtained directly from the wrapper message).
@@ -1366,7 +1363,7 @@ class Log(@volatile var dir: File,
   def deleteOldSegments(): Int = {
     if (!sanityChecked) return 0
     var numDeletedSegments = 0
-    if (config.delete) 
+    if (config.delete)
       numDeletedSegments = deleteRetentionMsBreachedSegments() + deleteRetentionSizeBreachedSegments()
     numDeletedSegments += deleteLogStartOffsetBreachedSegments()
     numDeletedSegments
@@ -1395,7 +1392,7 @@ class Log(@volatile var dir: File,
 
   private def deleteLogStartOffsetBreachedSegments(): Int = {
     def shouldDelete(segment: LogSegment, nextSegmentOpt: Option[LogSegment]) =
-      nextSegmentOpt.exists(_.baseOffset <= logStartOffset) || 
+      nextSegmentOpt.exists(_.baseOffset <= logStartOffset) ||
         (nextSegmentOpt.isEmpty && logEndOffset == logStartOffset)
     deleteOldSegments(shouldDelete, reason = s"log start offset $logStartOffset breach")
   }

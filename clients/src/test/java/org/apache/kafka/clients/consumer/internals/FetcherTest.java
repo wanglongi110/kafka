@@ -100,6 +100,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static java.util.Arrays.asList;
 import static java.util.Collections.singleton;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -129,6 +130,7 @@ public class FetcherTest {
     private Cluster cluster = TestUtils.singletonCluster(topicName, 4);
     private Node node = cluster.nodes().get(0);
     private Metrics metrics = new Metrics(time);
+    private boolean testPassthrough = false;
     FetcherMetricsRegistry metricsRegistry = new FetcherMetricsRegistry("consumer" + groupId);
 
     private SubscriptionState subscriptions = new SubscriptionState(OffsetResetStrategy.EARLIEST);
@@ -465,6 +467,44 @@ public class FetcherTest {
             // the position should not advance since no data has been returned
             assertEquals(0, subscriptions.position(tp0).longValue());
         }
+    }
+
+    @Test
+    public void testFetchEntireBatchWithShallowIteratorEnabled() {
+
+        for (byte magic : asList(RecordBatch.MAGIC_VALUE_V0, RecordBatch.MAGIC_VALUE_V1, RecordBatch.MAGIC_VALUE_V2)) {
+            ByteBuffer buffer = ByteBuffer.allocate(1024);
+            // create compressed batches
+            MemoryRecordsBuilder builder =
+                new MemoryRecordsBuilder(buffer, magic, CompressionType.GZIP, TimestampType.CREATE_TIME,
+                    0L, 10L, RecordBatch.NO_PRODUCER_ID, RecordBatch.NO_PRODUCER_EPOCH, RecordBatch.NO_SEQUENCE, false, false, 0, 1024);
+
+            builder.append(10L, "key".getBytes(), "value".getBytes());
+            builder.append(11L, "key1".getBytes(), "value1".getBytes());
+            builder.append(12L, "key2".getBytes(), "value2".getBytes());
+            builder.append(13L, "key3".getBytes(), "value3".getBytes());
+
+            builder.close();
+            buffer.flip();
+
+            // create new fetcher with shallow iterator enabled and maxPollRecords set to 6
+            testPassthrough = true;
+            Fetcher<byte[], byte[]> fetcher = createFetcher(subscriptions, new Metrics(time), 6);
+
+            subscriptions.assignFromUser(singleton(tp0));
+            subscriptions.seek(tp0, 0);
+
+            // normal fetch
+            assertEquals(1, fetcher.sendFetches());
+            client.prepareResponse(fetchResponse(tp0, MemoryRecords.readableRecords(buffer), Errors.NONE, 100L, 0));
+            consumerClient.poll(0);
+
+            // fetcher should return an entire batch of compressed records
+            List<ConsumerRecord<byte[], byte[]>> records = fetcher.fetchedRecords().get(tp0);
+
+            assertEquals(1, records.size());
+        }
+
     }
 
     @Test
@@ -2144,6 +2184,7 @@ public class FetcherTest {
                 fetchSize,
                 maxPollRecords,
                 true, // check crc
+                testPassthrough,
                 keyDeserializer,
                 valueDeserializer,
                 metadata,
