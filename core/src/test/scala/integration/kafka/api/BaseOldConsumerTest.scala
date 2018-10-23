@@ -20,10 +20,12 @@ import kafka.utils.{Logging, TestUtils}
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerConfig, ProducerRecord}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.record.TimestampType
+import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.junit.Assert._
 import org.junit.{Before, Test}
 
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.{Map, Seq}
 
 /**
  * Integration tests for the new consumer that cover basic usage as well as server failures
@@ -54,13 +56,51 @@ abstract class BaseOldConsumerTest extends OldConsumerIntegrationTestHarness wit
   @Before
   override def setUp() {
     super.setUp()
+  }
 
-    // create the test topic with all the brokers as replicas
-    TestUtils.createTopic(this.zkClient, topic, 2, serverCount, this.servers)
+  @Test
+  def testBrokerReplacement(): Unit = {
+    var consumer: ConsumerConnector = null
+    val recordCount = 100
+    val testTopic = "oldTestTopic"
+    try {
+      servers.head.shutdown()
+      servers.head.awaitShutdown()
+
+      TestUtils.waitUntilTrue(() => this.zkClient.getBroker(0).isEmpty,
+        s"timed out while waiting for broker to shutdown")
+      consumer = createOldConsumer(
+        groupId = "testConsumer",
+        securityProtocol = this.securityProtocol,
+        trustStoreFile = this.trustStoreFile,
+        saslProperties = this.clientSaslProperties,
+        props = Some(consumerConfig),
+        brokerListOpt = if (securityProtocol == SecurityProtocol.SSL) Some(brokerList) else None
+      )
+
+      servers.head.startup()
+      TestUtils.createTopic(this.zkClient, testTopic, 1, serverCount, servers)
+      sendRecords(recordCount, new TopicPartition(testTopic, 0))
+
+      (1 until serverCount).foreach(nodeId => {
+        servers(nodeId).shutdown()
+        servers(nodeId).awaitShutdown()
+      })
+
+      val records = consumeRecords(consumer, recordCount, topic = testTopic)
+      assertEquals(records.size, recordCount)
+    } finally {
+      if (consumer != null) {
+        consumer.shutdown()
+      }
+    }
   }
 
   @Test
   def testSimpleConsumption() {
+    // create the test topic with all the brokers as replicas
+    TestUtils.createTopic(this.zkClient, topic, 2, serverCount, this.servers)
+
     val numRecords = 10000
     sendRecords(numRecords)
 
@@ -119,7 +159,8 @@ abstract class BaseOldConsumerTest extends OldConsumerIntegrationTestHarness wit
 
   protected def consumeRecords[K, V](consumer: ConsumerConnector,
                                      numRecords: Int,
-                                     maxPollRecords: Int = Int.MaxValue): ArrayBuffer[MessageAndMetadata[Array[Byte], Array[Byte]]] = {
+                                     maxPollRecords: Int = Int.MaxValue,
+                                     topic: String = topic): ArrayBuffer[MessageAndMetadata[Array[Byte], Array[Byte]]] = {
     val streams = consumer.createMessageStreams(Map(topic -> 1))
     val iterator = streams.get(topic).head.head.iterator()
     val messages = new ArrayBuffer[MessageAndMetadata[Array[Byte], Array[Byte]]]()
