@@ -58,7 +58,8 @@ private[kafka] object LogValidator extends Logging {
                                                       timestampDiffMaxMs: Long,
                                                       partitionLeaderEpoch: Int,
                                                       isFromClient: Boolean,
-                                                      interBrokerProtocolVersion: ApiVersion): ValidationAndOffsetAssignResult = {
+                                                      interBrokerProtocolVersion: ApiVersion,
+                                                      decompressionEnable: Boolean): ValidationAndOffsetAssignResult = {
     if (sourceCodec == NoCompressionCodec && targetCodec == NoCompressionCodec) {
       // check the magic value
       if (!records.hasMatchingMagic(magic))
@@ -70,7 +71,7 @@ private[kafka] object LogValidator extends Logging {
           partitionLeaderEpoch, isFromClient, magic)
     } else {
       validateMessagesAndAssignOffsetsCompressed(records, offsetCounter, time, now, sourceCodec, targetCodec, compactedTopic,
-        magic, timestampType, timestampDiffMaxMs, partitionLeaderEpoch, isFromClient, interBrokerProtocolVersion)
+        magic, timestampType, timestampDiffMaxMs, partitionLeaderEpoch, isFromClient, interBrokerProtocolVersion, decompressionEnable)
     }
   }
 
@@ -248,15 +249,22 @@ private[kafka] object LogValidator extends Logging {
                                                  timestampDiffMaxMs: Long,
                                                  partitionLeaderEpoch: Int,
                                                  isFromClient: Boolean,
-                                                 interBrokerProtocolVersion: ApiVersion): ValidationAndOffsetAssignResult = {
+                                                 interBrokerProtocolVersion: ApiVersion,
+                                                 decompressionEnable: Boolean): ValidationAndOffsetAssignResult = {
       // No in place assignment situation 1 and 2
       var inPlaceAssignment = sourceCodec == targetCodec && toMagic > RecordBatch.MAGIC_VALUE_V0
 
       var maxTimestamp = RecordBatch.NO_TIMESTAMP
       val expectedInnerOffset = new LongRef(0)
       val validatedRecords = new mutable.ArrayBuffer[Record]
-
       var uncompressedSizeInBytes = 0
+
+      val firstBatch = records.batches.iterator.next()
+      // Check is made in {@link LogValidator#validateBatch} that the relative offset(s) of the record(s) in the record
+      // version V2 batch is monotonically increasing by 1, which is one of the requirement to avoid decompression.
+      val decompressBatch = decompressionEnable ||
+        !records.hasMatchingMagic(toMagic) ||
+        (firstBatch.magic < RecordBatch.MAGIC_VALUE_V2)
 
       for (batch <- records.batches.asScala) {
         validateBatch(batch, isFromClient, toMagic)
@@ -266,29 +274,31 @@ private[kafka] object LogValidator extends Logging {
         if (sourceCodec == NoCompressionCodec && batch.isControlBatch)
           inPlaceAssignment = true
 
-        for (record <- batch.asScala) {
-          if (sourceCodec != NoCompressionCodec && record.isCompressed)
-            throw new InvalidRecordException("Compressed outer record should not have an inner record with a " +
-              s"compression attribute set: $record")
-          if (targetCodec == ZStdCompressionCodec && interBrokerProtocolVersion < KAFKA_2_1_IV0)
-            throw new UnsupportedCompressionTypeException("Produce requests to inter.broker.protocol.version < 2.1 broker " + "are not allowed to use ZStandard compression")
-          validateRecord(batch, record, now, timestampType, timestampDiffMaxMs, compactedTopic)
+        if (decompressBatch || !inPlaceAssignment) {
+          for (record <- batch.asScala) {
+            if (sourceCodec != NoCompressionCodec && record.isCompressed)
+              throw new InvalidRecordException("Compressed outer record should not have an inner record with a " +
+                s"compression attribute set: $record")
+            if (targetCodec == ZStdCompressionCodec && interBrokerProtocolVersion < KAFKA_2_1_IV0)
+              throw new UnsupportedCompressionTypeException("Produce requests to inter.broker.protocol.version < 2.1 broker " + "are not allowed to use ZStandard compression")
+            validateRecord(batch, record, now, timestampType, timestampDiffMaxMs, compactedTopic)
 
-          uncompressedSizeInBytes += record.sizeInBytes()
-          if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && toMagic > RecordBatch.MAGIC_VALUE_V0) {
-            // Check if we need to overwrite offset
-            // No in place assignment situation 3
-            if (record.offset != expectedInnerOffset.getAndIncrement())
+            uncompressedSizeInBytes += record.sizeInBytes()
+            if (batch.magic > RecordBatch.MAGIC_VALUE_V0 && toMagic > RecordBatch.MAGIC_VALUE_V0) {
+              // Check if we need to overwrite offset
+              // No in place assignment situation 3
+              if (record.offset != expectedInnerOffset.getAndIncrement())
+                inPlaceAssignment = false
+              if (record.timestamp > maxTimestamp)
+                maxTimestamp = record.timestamp
+            }
+
+            // No in place assignment situation 4
+            if (!record.hasMagic(toMagic))
               inPlaceAssignment = false
-            if (record.timestamp > maxTimestamp)
-              maxTimestamp = record.timestamp
+
+            validatedRecords += record
           }
-
-          // No in place assignment situation 4
-          if (!record.hasMagic(toMagic))
-            inPlaceAssignment = false
-
-          validatedRecords += record
         }
       }
 
@@ -306,12 +316,20 @@ private[kafka] object LogValidator extends Logging {
       } else {
         // we can update the batch only and write the compressed payload as is
         val batch = records.batches.iterator.next()
-        val lastOffset = offsetCounter.addAndGet(validatedRecords.size) - 1
+        val lastOffset = if (decompressBatch)
+          offsetCounter.addAndGet(validatedRecords.size) - 1
+        else {
+          // batch.countOrNull() will never be null as the following line is execteud
+          // for record format version V2.
+          offsetCounter.addAndGet(batch.countOrNull().longValue()) - 1
+        }
 
         batch.setLastOffset(lastOffset)
 
         if (timestampType == TimestampType.LOG_APPEND_TIME)
           maxTimestamp = now
+        else if (!decompressBatch)
+            maxTimestamp = batch.maxTimestamp
 
         if (toMagic >= RecordBatch.MAGIC_VALUE_V1)
           batch.setMaxTimestamp(timestampType, maxTimestamp)
