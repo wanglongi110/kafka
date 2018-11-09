@@ -878,7 +878,8 @@ class Log(@volatile var dir: File,
               config.messageTimestampDifferenceMaxMs,
               leaderEpoch,
               isFromClient,
-              interBrokerProtocolVersion)
+              interBrokerProtocolVersion,
+              config.producerBatchDecompressionEnable)
           } catch {
             case e: IOException =>
               throw new KafkaException(s"Error validating messages while appending to log $name", e)
