@@ -18,7 +18,7 @@ package kafka.server
 
 import java.util.{Collections, Properties}
 
-import kafka.admin.{AdminOperationException, AdminUtils}
+import kafka.admin.AdminOperationException
 import kafka.common.TopicAlreadyMarkedForDeletionException
 import kafka.log.LogConfig
 import kafka.metrics.KafkaMetricsGroup
@@ -98,7 +98,7 @@ class AdminManager(val config: KafkaConfig,
               (partitionId.intValue, replicas.asScala.map(_.intValue))
             }
           } else
-            AdminUtils.assignReplicasToBrokers(brokers, arguments.numPartitions, arguments.replicationFactor)
+            adminZkClient.assignReplicasToAvailableBrokers(brokers, config.getMaintenanceBrokerList.toSet, arguments.numPartitions, arguments.replicationFactor)
         }
         trace(s"Assignments for topic $topic are $assignments ")
 
@@ -254,7 +254,8 @@ class AdminManager(val config: KafkaConfig,
         }
 
         val updatedReplicaAssignment = adminZkClient.addPartitions(topic, existingAssignment, allBrokers,
-          newPartition.totalCount, reassignment, validateOnly = validateOnly)
+          newPartition.totalCount, reassignment, validateOnly = validateOnly,
+          noNewPartitionBrokerIds = config.getMaintenanceBrokerList.toSet)
         CreatePartitionsMetadata(topic, updatedReplicaAssignment, ApiError.NONE)
       } catch {
         case e: AdminOperationException =>
@@ -436,7 +437,10 @@ class AdminManager(val config: KafkaConfig,
   }
 
   private def configType(name: String, synonyms: List[String]): ConfigDef.Type = {
-    val configType = config.typeOf(name)
+    var configType = config.typeOf(name)
+    if (configType == null)
+      configType = DynamicConfig.Broker.typeOf(name)
+
     if (configType != null)
       configType
     else
