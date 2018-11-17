@@ -860,6 +860,10 @@ class KafkaZkClient private[zk] (zooKeeperClient: ZooKeeperClient, isSecure: Boo
     }
   }
 
+  def setOrCreatePartitionReassignment(reassignment: collection.Map[TopicPartition, Seq[Int]]): Unit = {
+    setOrCreatePartitionReassignment(reassignment, ZkVersion.NoVersion)
+  }
+
   /**
    * Sets or creates the partition reassignment znode with the given reassignment depending on whether it already
    * exists or not.
