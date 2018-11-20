@@ -21,8 +21,10 @@ import java.io.IOException;
 
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.nio.channels.SelectionKey;
 
+import java.nio.channels.SocketChannel;
 import java.security.Principal;
 
 import java.util.Objects;
@@ -45,6 +47,7 @@ public class KafkaChannel {
     private boolean disconnected;
     private boolean muted;
     private ChannelState state;
+    private SocketAddress remoteAddress;
 
     public KafkaChannel(String id, TransportLayer transportLayer, Authenticator authenticator, int maxReceiveSize, MemoryPool memoryPool) throws IOException {
         this.id = id;
@@ -84,6 +87,10 @@ public class KafkaChannel {
 
     public void disconnect() {
         disconnected = true;
+        if (state.state() == ChannelState.State.NOT_CONNECTED && remoteAddress != null) {
+            //if we captured the remote address we can provide more information
+            state = new ChannelState(ChannelState.State.NOT_CONNECTED, remoteAddress.toString());
+        }
         transportLayer.disconnect();
     }
 
@@ -96,9 +103,22 @@ public class KafkaChannel {
     }
 
     public boolean finishConnect() throws IOException {
+        //we need to grab remoteAddr before finishConnect() is called otherwise
+        //it becomes inaccessible if the connection was refused.
+        SocketChannel socketChannel = transportLayer.socketChannel();
+        if (socketChannel != null) {
+            remoteAddress = socketChannel.getRemoteAddress();
+        }
         boolean connected = transportLayer.finishConnect();
-        if (connected)
-            state = ready() ? ChannelState.READY : ChannelState.AUTHENTICATE;
+        if (connected) {
+            if (ready()) {
+                state = ChannelState.READY;
+            } else if (remoteAddress != null) {
+                state = new ChannelState(ChannelState.State.AUTHENTICATE, remoteAddress.toString());
+            } else {
+                state = ChannelState.AUTHENTICATE;
+            }
+        }
         return connected;
     }
 

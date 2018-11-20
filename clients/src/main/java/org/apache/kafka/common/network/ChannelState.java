@@ -46,11 +46,44 @@ package org.apache.kafka.common.network;
  *   <li>Security misconfiguration: NOT_CONNECTED => AUTHENTICATE, disconnected in AUTHENTICATE state</li>
  * </ul>
  */
-public enum ChannelState {
-    NOT_CONNECTED,
-    AUTHENTICATE,
-    READY,
-    EXPIRED,
-    FAILED_SEND,
-    LOCAL_CLOSE
+public class ChannelState {
+
+    public enum State {
+        NOT_CONNECTED,
+        AUTHENTICATE,
+        READY,
+        EXPIRED,
+        FAILED_SEND,
+        LOCAL_CLOSE
+    }
+
+    // AUTHENTICATION_FAILED has a custom exception. For other states,
+    // create a reusable `ChannelState` instance per-state.
+    public static final ChannelState NOT_CONNECTED = new ChannelState(State.NOT_CONNECTED);
+    public static final ChannelState AUTHENTICATE = new ChannelState(State.AUTHENTICATE);
+    public static final ChannelState READY = new ChannelState(State.READY);
+    public static final ChannelState EXPIRED = new ChannelState(State.EXPIRED);
+    public static final ChannelState FAILED_SEND = new ChannelState(State.FAILED_SEND);
+    public static final ChannelState LOCAL_CLOSE = new ChannelState(State.LOCAL_CLOSE);
+
+    private final State state;
+    private final String remoteAddress;
+
+    public ChannelState(State state) {
+        this(state, null);
+    }
+
+    public ChannelState(State state, String remoteAddress) {
+        this.state = state;
+        this.remoteAddress = remoteAddress;
+    }
+
+    public State state() {
+        return state;
+    }
+
+    public String remoteAddress() {
+        return remoteAddress;
+    }
+
 }
