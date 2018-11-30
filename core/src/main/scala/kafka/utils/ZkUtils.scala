@@ -884,6 +884,26 @@ class ZkUtils(val zkClient: ZkClient,
     }
   }
 
+  def updatePartitionReassignmentData(partitionsToBeReassigned: Map[TopicAndPartition, Seq[Int]]) {
+    val zkPath = ZkUtils.ReassignPartitionsPath
+    partitionsToBeReassigned.size match {
+      case 0 => // need to delete the /admin/reassign_partitions path
+        deletePath(zkPath)
+        info("No more partitions need to be reassigned. Deleting zk path %s".format(zkPath))
+      case _ =>
+        val jsonData = formatAsReassignmentJson(partitionsToBeReassigned)
+        try {
+          updatePersistentPath(zkPath, jsonData)
+          debug("Updated partition reassignment path with %s".format(jsonData))
+        } catch {
+          case _: ZkNoNodeException =>
+            createPersistentPath(zkPath, jsonData)
+            debug("Created path %s with %s for partition reassignment".format(zkPath, jsonData))
+          case e2: Throwable => throw new AdminOperationException(e2.toString)
+        }
+    }
+  }
+
   def transactionalUpdatePartitionReassignmentData(expectedControllerEpochZkVersion: Int,
                                                    partitionsToBeReassigned: Map[TopicAndPartition, Seq[Int]]) {
     val zkPath = ZkUtils.ReassignPartitionsPath
