@@ -861,7 +861,7 @@ class KafkaZkClient private[zk] (zooKeeperClient: ZooKeeperClient, isSecure: Boo
   }
 
   def setOrCreatePartitionReassignment(reassignment: collection.Map[TopicPartition, Seq[Int]]): Unit = {
-    setOrCreatePartitionReassignment(reassignment, ZkVersion.NoVersion)
+    setOrCreatePartitionReassignment(reassignment, ZkVersion.MatchAnyVersion)
   }
 
   /**
@@ -902,6 +902,10 @@ class KafkaZkClient private[zk] (zooKeeperClient: ZooKeeperClient, isSecure: Boo
    */
   def createPartitionReassignment(reassignment: Map[TopicPartition, Seq[Int]])  = {
     createRecursive(ReassignPartitionsZNode.path, ReassignPartitionsZNode.encode(reassignment))
+  }
+
+  def deletePartitionReassignment(): Unit = {
+    deletePath(ReassignPartitionsZNode.path, ZkVersion.MatchAnyVersion)
   }
 
   /**
