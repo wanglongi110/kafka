@@ -924,29 +924,29 @@ class KafkaController(val config: KafkaConfig,
    * method is invoked to avoid premature deletion of the `reassign_partitions` znode.
    */
   private[controller] def removePartitionsFromReassignedPartitions(partitionsToBeRemoved: Set[TopicPartition]) {
-    partitionsToBeRemoved.map(controllerContext.partitionsBeingReassigned).foreach { reassignContext =>
-      reassignContext.unregisterReassignIsrChangeHandler(zkClient)
-    }
-
-    val updatedPartitionsBeingReassigned = controllerContext.partitionsBeingReassigned -- partitionsToBeRemoved
-
-    info(s"Removing partitions $partitionsToBeRemoved from the list of reassigned partitions in zookeeper")
-
-    // write the new list to zookeeper
-    if (updatedPartitionsBeingReassigned.isEmpty) {
-      info(s"No more partitions need to be reassigned. Deleting zk path ${ReassignPartitionsZNode.path}")
-      zkClient.deletePartitionReassignment(controllerContext.epochZkVersion)
-      // Ensure we detect future reassignments
-      eventManager.put(PartitionReassignment)
-    } else {
-      val reassignment = updatedPartitionsBeingReassigned.mapValues(_.newReplicas)
-      try zkClient.setOrCreatePartitionReassignment(reassignment, controllerContext.epochZkVersion)
-      catch {
-        case e: KeeperException => throw new AdminOperationException(e)
+    if (partitionsToBeRemoved.nonEmpty) {
+      partitionsToBeRemoved.map(controllerContext.partitionsBeingReassigned).foreach { reassignContext =>
+        reassignContext.unregisterReassignIsrChangeHandler(zkClient)
       }
-    }
 
-    controllerContext.partitionsBeingReassigned --= partitionsToBeRemoved
+      val updatedPartitionsBeingReassigned = controllerContext.partitionsBeingReassigned -- partitionsToBeRemoved
+
+      info(s"Removing partitions $partitionsToBeRemoved from the list of reassigned partitions in zookeeper")
+
+      // write the new list to zookeeper
+      if (updatedPartitionsBeingReassigned.isEmpty) {
+        info(s"No more partitions need to be reassigned. Deleting zk path ${ReassignPartitionsZNode.path}")
+        zkClient.deletePartitionReassignment(controllerContext.epochZkVersion)
+      } else {
+        val reassignment = updatedPartitionsBeingReassigned.mapValues(_.newReplicas)
+        try zkClient.setOrCreatePartitionReassignment(reassignment, controllerContext.epochZkVersion)
+        catch {
+          case e: KeeperException => throw new AdminOperationException(e)
+        }
+      }
+
+      controllerContext.partitionsBeingReassigned --= partitionsToBeRemoved
+    }
   }
 
   private def removePartitionsFromPreferredReplicaElection(partitionsToBeRemoved: Set[TopicPartition],
@@ -1479,15 +1479,17 @@ class KafkaController(val config: KafkaConfig,
     // the `path exists` check for free
     if (zkClient.registerZNodeChangeHandlerAndCheckExistence(partitionReassignmentHandler)) {
       val partitionReassignment = zkClient.getPartitionReassignment
+      val partitionsToBeReassigned = partitionReassignment.filterNot(p => controllerContext.partitionsBeingReassigned.contains(p._1))
 
       // Populate `partitionsBeingReassigned` with all partitions being reassigned before invoking
       // `maybeTriggerPartitionReassignment` (see method documentation for the reason)
-      partitionReassignment.foreach { case (tp, newReplicas) =>
+      partitionsToBeReassigned.foreach { case (tp, newReplicas) =>
         val reassignIsrChangeHandler = new PartitionReassignmentIsrChangeHandler(eventManager, tp)
         controllerContext.partitionsBeingReassigned.put(tp, ReassignedPartitionsContext(newReplicas, reassignIsrChangeHandler))
       }
 
-      maybeTriggerPartitionReassignment(partitionReassignment.keySet)
+      info("Partitions needed to be reassigned: " + partitionsToBeReassigned)
+      maybeTriggerPartitionReassignment(partitionsToBeReassigned.keySet)
     }
   }
 
@@ -1811,6 +1813,10 @@ class PartitionReassignmentHandler(eventManager: ControllerEventManager) extends
   // handleDeletion(). This approach is more robust as it doesn't depend on the watcher being re-registered after
   // it's consumed during data changes (we ensure re-registration when the znode is deleted).
   override def handleCreation(): Unit = eventManager.put(PartitionReassignment)
+
+  override def handleDeletion(): Unit = eventManager.put(PartitionReassignment)
+
+  override def handleDataChange(): Unit = eventManager.put(PartitionReassignment)
 }
 
 class PartitionReassignmentIsrChangeHandler(eventManager: ControllerEventManager, partition: TopicPartition) extends ZNodeChangeHandler {
