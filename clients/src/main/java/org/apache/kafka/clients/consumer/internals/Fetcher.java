@@ -677,8 +677,8 @@ public class Fetcher<K, V> implements SubscriptionState.Listener, Closeable {
                         completedFetches.poll();
                     }
                 } else {
-                    List<ConsumerRecord<K, V>> records = fetchRecords(nextInLineRecords, recordsRemaining);
                     TopicPartition partition = nextInLineRecords.partition;
+                    List<ConsumerRecord<K, V>> records = fetchRecords(nextInLineRecords, recordsRemaining);
                     if (!records.isEmpty()) {
                         List<ConsumerRecord<K, V>> currentRecords = fetched.get(partition);
                         if (currentRecords == null) {
