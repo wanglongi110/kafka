@@ -82,6 +82,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 val metadataCache: MetadataCache,
                 val metrics: Metrics,
                 val authorizer: Option[Authorizer],
+                val observer: Observer,
                 val quotas: QuotaManagers,
                 val fetchManager: FetchManager,
                 brokerTopicStats: BrokerTopicStats,
@@ -2399,6 +2400,12 @@ class KafkaApis(val requestChannel: RequestChannel,
         val responseString =
           if (RequestChannel.isRequestLoggingEnabled) Some(response.toString(request.context.apiVersion))
           else None
+        try {
+          observer.observe(request, response)
+        } catch {
+          case e: Exception => error(s"Observer failed to observe ${Observer.describeRequestAndResponse(request, response)}", e)
+        }
+
         new RequestChannel.SendResponse(request, responseSend, responseString, onComplete)
       case None =>
         new RequestChannel.NoOpResponse(request)

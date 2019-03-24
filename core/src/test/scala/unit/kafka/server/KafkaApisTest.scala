@@ -68,6 +68,7 @@ class KafkaApisTest {
   private val brokerId = 1
   private val metadataCache = new MetadataCache(brokerId)
   private val authorizer: Option[Authorizer] = None
+  private val observer: Observer = EasyMock.createNiceMock(classOf[Observer])
   private val clientQuotaManager: ClientQuotaManager = EasyMock.createNiceMock(classOf[ClientQuotaManager])
   private val clientRequestQuotaManager: ClientRequestQuotaManager = EasyMock.createNiceMock(classOf[ClientRequestQuotaManager])
   private val replicaQuotaManager: ReplicationQuotaManager = EasyMock.createNiceMock(classOf[ReplicationQuotaManager])
@@ -100,6 +101,7 @@ class KafkaApisTest {
       metadataCache,
       metrics,
       authorizer,
+      observer,
       quotas,
       fetchManager,
       brokerTopicStats,
