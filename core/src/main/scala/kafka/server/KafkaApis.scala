@@ -87,6 +87,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 val metadataCache: MetadataCache,
                 val metrics: Metrics,
                 val authorizer: Option[Authorizer],
+                val observer: Observer,
                 val quotas: QuotaManagers,
                 val fetchManager: FetchManager,
                 brokerTopicStats: BrokerTopicStats,
@@ -531,6 +532,14 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (authorizedRequestInfo.isEmpty)
       sendResponseCallback(Map.empty)
     else {
+
+      try
+        observer.observeProduceRequest(request.context, request.body[ProduceRequest])
+      catch {
+        case e: Exception => error(s"Observer failed to observe the produce request " +
+          s"${Observer.describeRequestAndResponse(request, null)}", e)
+      }
+
       val internalTopicsAllowed = request.header.clientId == AdminUtils.AdminClientId
 
       // call the replica manager to append messages to the replicas
@@ -2597,8 +2606,11 @@ class KafkaApis(val requestChannel: RequestChannel,
         val responseString =
           if (RequestChannel.isRequestLoggingEnabled) Some(response.toString(request.context.apiVersion))
           else None
+        observeRequestResponse(request, response)
+
         new RequestChannel.SendResponse(request, responseSend, responseString, onComplete)
       case None =>
+        observeRequestResponse(request, null)
         new RequestChannel.NoOpResponse(request)
     }
     sendResponse(response)
@@ -2620,4 +2632,11 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
+  private def observeRequestResponse(request: RequestChannel.Request, response: AbstractResponse): Unit = {
+    try {
+      observer.observe(request.context, request.body[AbstractRequest], response)
+    } catch {
+      case e: Exception => error(s"Observer failed to observe ${Observer.describeRequestAndResponse(request, response)}", e)
+    }
+  }
 }
