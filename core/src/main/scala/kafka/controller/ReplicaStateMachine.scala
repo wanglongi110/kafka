@@ -202,9 +202,12 @@ class ReplicaStateMachine(config: KafkaConfig,
           replicaState.put(replica, OnlineReplica)
         }
       case OfflineReplica =>
+        // callback needs to be null so that later when controller sends STOP_REPLICA request to destination
+        // broker to change replica from online to offline state, it will batch the requests and send one request
+        // for the topic instead of one request for each topic partition
         validReplicas.foreach { replica =>
           controllerBrokerRequestBatch.addStopReplicaRequestForBrokers(Seq(replicaId), replica.topicPartition,
-            deletePartition = false, (_, _) => ())
+            deletePartition = false, null)
         }
         val (replicasWithLeadershipInfo, replicasWithoutLeadershipInfo) = validReplicas.partition { replica =>
           controllerContext.partitionLeadershipInfo.contains(replica.topicPartition)
