@@ -425,7 +425,12 @@ class PartitionStateMachine(config: KafkaConfig,
         val leaderIsrAndControllerEpoch = leaderIsrAndControllerEpochOpt.get
         val isr = leaderIsrAndControllerEpoch.leaderAndIsr.isr
         val leaderOpt = PartitionLeaderElectionAlgorithms.offlinePartitionLeaderElection(assignment, isr, liveReplicas.toSet, uncleanLeaderElectionEnabled, controllerContext)
-        val newLeaderAndIsrOpt = leaderOpt.map { leader =>
+        val newLeaderAndIsrOpt = leaderOpt.map { case (leader, uncleanElection) =>
+          if (uncleanElection) {
+            controllerContext.stats.uncleanLeaderElectionRate.mark()
+            warn(s"Unclean leader election. Partition $partition has been assigned leader $leader from deposed " +
+              s"leader ${leaderIsrAndControllerEpoch.leaderAndIsr.leader}.")
+          }
           val newIsr = if (isr.contains(leader)) isr.filter(replica => controllerContext.isReplicaOnline(replica, partition))
           else List(leader)
           leaderIsrAndControllerEpoch.leaderAndIsr.newLeaderAndIsr(leader, newIsr)
@@ -497,16 +502,17 @@ class PartitionStateMachine(config: KafkaConfig,
 }
 
 object PartitionLeaderElectionAlgorithms {
-  def offlinePartitionLeaderElection(assignment: Seq[Int], isr: Seq[Int], liveReplicas: Set[Int], uncleanLeaderElectionEnabled: Boolean, controllerContext: ControllerContext): Option[Int] = {
-    assignment.find(id => liveReplicas.contains(id) && isr.contains(id)).orElse {
-      if (uncleanLeaderElectionEnabled) {
-        val leaderOpt = assignment.find(liveReplicas.contains)
-        if (!leaderOpt.isEmpty)
-          controllerContext.stats.uncleanLeaderElectionRate.mark()
-        leaderOpt
-      } else {
-        None
-      }
+  def offlinePartitionLeaderElection(assignment: Seq[Int], isr: Seq[Int], liveReplicas: Set[Int], uncleanLeaderElectionEnabled: Boolean, controllerContext: ControllerContext): Option[(Int, Boolean)] = {
+    assignment.find(id => liveReplicas.contains(id) && isr.contains(id)) match {
+      case Some(replicaId) => Some(replicaId, false)
+      case None =>  if (uncleanLeaderElectionEnabled) {
+                      assignment.find(liveReplicas.contains) match {
+                          case Some(uncleanReplicaId) => Some(uncleanReplicaId, true)
+                          case None => None
+                        }
+                      } else {
+                        None
+                      }
     }
   }
 
