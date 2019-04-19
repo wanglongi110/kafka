@@ -510,6 +510,13 @@ class KafkaApis(val requestChannel: RequestChannel,
         responseCallback = sendResponseCallback,
         recordConversionStatsCallback = processingStatsCallback)
 
+      try
+        observer.observeProduceRequest(request.context, request.body[ProduceRequest])
+      catch {
+        case e: Exception => error(s"Observer failed to observe the produce request " +
+          s"${Observer.describeRequestAndResponse(request, null)}", e)
+      }
+
       // if the request is put into the purgatory, it will have a held reference and hence cannot be garbage collected;
       // hence we clear its data here in order to let GC reclaim its memory since it is already appended to log
       produceRequest.clearPartitionRecords()
@@ -2400,14 +2407,11 @@ class KafkaApis(val requestChannel: RequestChannel,
         val responseString =
           if (RequestChannel.isRequestLoggingEnabled) Some(response.toString(request.context.apiVersion))
           else None
-        try {
-          observer.observe(request.context, request.body[AbstractRequest], response)
-        } catch {
-          case e: Exception => error(s"Observer failed to observe ${Observer.describeRequestAndResponse(request, response)}", e)
-        }
+        observeRequestResponse(request, response)
 
         new RequestChannel.SendResponse(request, responseSend, responseString, onComplete)
       case None =>
+        observeRequestResponse(request, null)
         new RequestChannel.NoOpResponse(request)
     }
     sendResponse(response)
@@ -2429,4 +2433,11 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
+  private def observeRequestResponse(request: RequestChannel.Request, response: AbstractResponse): Unit = {
+    try {
+      observer.observe(request.context, request.body[AbstractRequest], response)
+    } catch {
+      case e: Exception => error(s"Observer failed to observe ${Observer.describeRequestAndResponse(request, response)}", e)
+    }
+  }
 }
