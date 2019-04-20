@@ -734,6 +734,36 @@ public class RecordAccumulatorTest {
     }
 
     @Test
+    public void testSplitReenqueueAndBatchCompletion() {
+        long now = time.milliseconds();
+        RecordAccumulator accum = createTestRecordAccumulator(1024, 10 * 1024, CompressionType.GZIP, 10);
+
+        // Create a big batch
+        ByteBuffer buffer = ByteBuffer.allocate(4096);
+        MemoryRecordsBuilder builder = MemoryRecords.builder(buffer, CompressionType.NONE, TimestampType.CREATE_TIME, 0L);
+        ProducerBatch batch = new ProducerBatch(tp1, builder, now, false);
+        byte[] value = new byte[1024];
+        // Append two messages so the batch is too big.
+        Future<RecordMetadata> future1 = batch.tryAppend(now, null, value, Record.EMPTY_HEADERS, null, now);
+        Future<RecordMetadata> future2 = batch.tryAppend(now, null, value, Record.EMPTY_HEADERS, null, now);
+        assertNotNull(future1);
+        assertNotNull(future2);
+        batch.close();
+        assertEquals(2, accum.splitAndReenqueue(batch));
+        // Expect two batches (which are the split of the original batch)
+        Deque<ProducerBatch> childBatches = accum.batches().get(tp1);
+        assertEquals(2, childBatches.size());
+        assertFalse(batch.produceFuture.completed());
+        ProducerBatch childBatch1 = childBatches.remove();
+        ProducerBatch childBatch2 = childBatches.remove();
+        childBatch1.produceFuture.set(0, 0, null);
+        childBatch2.produceFuture.set(0, 0, null);
+        childBatch1.produceFuture.done();
+        childBatch2.produceFuture.done();
+        assertTrue(batch.produceFuture.completed());
+    }
+
+    @Test
     public void testSplitAndReenqueue() throws ExecutionException, InterruptedException {
         long now = time.milliseconds();
         RecordAccumulator accum = createTestRecordAccumulator(1024, 10 * 1024, CompressionType.GZIP, 10);

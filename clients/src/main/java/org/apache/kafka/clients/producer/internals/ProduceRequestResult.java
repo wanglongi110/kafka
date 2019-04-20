@@ -16,12 +16,14 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.util.List;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.record.RecordBatch;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import org.apache.kafka.common.requests.ProduceRequest;
 
 
 /**
@@ -37,6 +39,8 @@ public final class ProduceRequestResult {
     private volatile Long baseOffset = null;
     private volatile long logAppendTime = RecordBatch.NO_TIMESTAMP;
     private volatile RuntimeException error;
+    // This is used to chain produce request results of the split batches
+    private volatile List<ProduceRequestResult> chainedRequestResults = null;
 
     /**
      * Create an instance of this class.
@@ -60,8 +64,16 @@ public final class ProduceRequestResult {
         this.error = error;
     }
 
+    public void chain(List<ProduceRequestResult> requestResults) {
+        assert requestResults != null;
+        if (chainedRequestResults != null) {
+            throw new IllegalStateException("The produce request result can only be chained once.");
+        }
+        chainedRequestResults = requestResults;
+    }
+
     /**
-     * Mark this request as complete and unblock any threads waiting on its completion.
+     * Mark this request as complete and may unblock any threads waiting on its completion.
      */
     public void done() {
         if (baseOffset == null)
@@ -74,6 +86,12 @@ public final class ProduceRequestResult {
      */
     public void await() throws InterruptedException {
         latch.await();
+        // If the produce batch was split then wait for all the child batches to finish
+        if (chainedRequestResults != null) {
+            for(ProduceRequestResult requestResult : chainedRequestResults) {
+                requestResult.await();
+            }
+        }
     }
 
     /**
@@ -125,6 +143,17 @@ public final class ProduceRequestResult {
      * Has the request completed?
      */
     public boolean completed() {
-        return this.latch.getCount() == 0L;
+        if (this.latch.getCount() != 0L) {
+            return false;
+        }
+
+        if (chainedRequestResults != null) {
+            for (ProduceRequestResult result : chainedRequestResults) {
+                if (!result.completed()) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 }

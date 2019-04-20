@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.util.stream.Collectors;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.TopicPartition;
@@ -273,6 +274,11 @@ public final class ProducerBatch {
         if (batch != null)
             batches.add(batch);
 
+        List<ProduceRequestResult> produceRequestResultList =
+            batches.stream().map(b -> b.produceFuture).collect(Collectors.toList());
+
+        // Chain the produceFuture's before marking as #done()
+        produceFuture.chain(produceRequestResultList);
         produceFuture.set(ProduceResponse.INVALID_OFFSET, NO_TIMESTAMP, new RecordBatchTooLargeException());
         produceFuture.done();
 
