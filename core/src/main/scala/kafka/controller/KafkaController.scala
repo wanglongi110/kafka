@@ -923,7 +923,7 @@ class KafkaController(val config: KafkaConfig,
    * `ControllerContext.partitionsBeingReassigned` must be populated with all partitions being reassigned before this
    * method is invoked to avoid premature deletion of the `reassign_partitions` znode.
    */
-  private def removePartitionsFromReassignedPartitions(partitionsToBeRemoved: Set[TopicPartition]) {
+  private[controller] def removePartitionsFromReassignedPartitions(partitionsToBeRemoved: Set[TopicPartition]) {
     partitionsToBeRemoved.map(controllerContext.partitionsBeingReassigned).foreach { reassignContext =>
       reassignContext.unregisterReassignIsrChangeHandler(zkClient)
     }
