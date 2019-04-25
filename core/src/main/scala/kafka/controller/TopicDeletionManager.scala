@@ -226,6 +226,8 @@ class TopicDeletionManager(controller: KafkaController,
   }
 
   private def completeDeleteTopic(topic: String) {
+    // abort pending partition reassignments for deleted topic
+    abortPartitionReassignmentForTopic(topic)
     // deregister partition change listener on the deleted topic. This is to prevent the partition change listener
     // firing before the new topic listener when a deleted topic gets auto created
     controller.unregisterPartitionModificationsHandlers(Seq(topic))
@@ -238,6 +240,12 @@ class TopicDeletionManager(controller: KafkaController,
     zkClient.deleteTopicDeletions(Seq(topic), controllerContext.epochZkVersion)
     controller.partitionStateMachine.removePartitionStatesForTopic(topic)
     controllerContext.removeTopic(topic)
+  }
+
+  private def abortPartitionReassignmentForTopic(topic: String): Unit = {
+    val partitionsBeingReassignedForDeletedTopic =
+      controllerContext.partitionsBeingReassigned.keySet.filter(_.topic().equals(topic))
+    controller.removePartitionsFromReassignedPartitions(partitionsBeingReassignedForDeletedTopic)
   }
 
   /**
