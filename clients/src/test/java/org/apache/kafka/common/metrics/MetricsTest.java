@@ -419,6 +419,24 @@ public class MetricsTest {
     }
 
     @Test
+    public void testDuplicateMetricNameOptionallyReplace() {
+        metrics.setReplaceOnDuplicateMetric(true);
+
+        int initialSize = metrics.metrics().size();
+        MetricName metricName = metrics.metricName("test1", "grp1");
+        metrics.addMetric(metricName, new Count());
+        assertEquals(initialSize + 1, metrics.metrics().size());
+
+        metrics.addMetric(metricName, new Count());
+        assertEquals(initialSize + 1, metrics.metrics().size());
+
+        assertNotNull(metrics.removeMetric(metricName));
+        assertNull(metrics.metrics().get(metricName));
+
+        assertEquals(initialSize, metrics.metrics().size());
+    }
+
+    @Test
     public void testQuotas() {
         Sensor sensor = metrics.sensor("test");
         sensor.add(metrics.metricName("test1.total", "grp1"), new Total(), new MetricConfig().quota(Quota.upperBound(5.0)));
