@@ -17,7 +17,7 @@
 
 package kafka.consumer
 
-import kafka.server.{AbstractFetcherManager, AbstractFetcherThread, BrokerAndInitialOffset}
+import kafka.server.{ScalaConsumerAbstractFetcherManager, ScalaConsumerAbstractFetcherThread, BrokerAndInitialOffset}
 import kafka.cluster.{BrokerEndPoint, Cluster}
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.utils.Time
@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class ConsumerFetcherManager(private val consumerIdString: String,
                              private val config: ConsumerConfig,
                              private val zkUtils : ZkUtils)
-        extends AbstractFetcherManager("ConsumerFetcherManager-%d".format(Time.SYSTEM.milliseconds),
+        extends ScalaConsumerAbstractFetcherManager("ConsumerFetcherManager-%d".format(Time.SYSTEM.milliseconds),
                                        config.clientId, config.numConsumerFetchers) {
   private var partitionMap: immutable.Map[TopicPartition, PartitionTopicInfo] = null
   private val noLeaderPartitionSet = new mutable.HashSet[TopicPartition]
@@ -113,7 +113,7 @@ class ConsumerFetcherManager(private val consumerIdString: String,
     }
   }
 
-  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): AbstractFetcherThread = {
+  override def createFetcherThread(fetcherId: Int, sourceBroker: BrokerEndPoint): ScalaConsumerAbstractFetcherThread = {
     new ConsumerFetcherThread(consumerIdString, fetcherId, config, sourceBroker, partitionMap, this)
   }
 

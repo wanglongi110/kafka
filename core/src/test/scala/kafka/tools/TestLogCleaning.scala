@@ -188,8 +188,8 @@ object TestLogCleaning {
   }
 
   def valuesIterator(reader: BufferedReader) = {
-    new IteratorTemplate[TestRecord] {
-      def makeNext(): TestRecord = {
+    new IteratorTemplate[ScalaConsumerTestRecord] {
+      def makeNext(): ScalaConsumerTestRecord = {
         var next = readNext(reader)
         while(next != null && next.delete)
           next = readNext(reader)
@@ -201,16 +201,16 @@ object TestLogCleaning {
     }
   }
 
-  def readNext(reader: BufferedReader): TestRecord = {
+  def readNext(reader: BufferedReader): ScalaConsumerTestRecord = {
     var line = reader.readLine()
     if(line == null)
       return null
-    var curr = new TestRecord(line)
+    var curr = new ScalaConsumerTestRecord(line)
     while(true) {
       line = peekLine(reader)
       if(line == null)
         return curr
-      val next = new TestRecord(line)
+      val next = new ScalaConsumerTestRecord(line)
       if(next == null || next.topicAndKey != curr.topicAndKey)
         return curr
       curr = next
@@ -271,7 +271,7 @@ object TestLogCleaning {
         else
           new ProducerRecord[Array[Byte],Array[Byte]](topic, key.toString.getBytes(), i.toString.getBytes())
       producer.send(msg)
-      producedWriter.write(TestRecord(topic, key, i, delete).toString)
+      producedWriter.write(ScalaConsumerTestRecord(topic, key, i, delete).toString)
       producedWriter.newLine()
     }
     producedWriter.close()
@@ -301,7 +301,7 @@ object TestLogCleaning {
         for(item <- stream) {
           val delete = item.message == null
           val value = if(delete) -1L else item.message.toLong
-          consumedWriter.write(TestRecord(topic, item.key.toInt, value, delete).toString)
+          consumedWriter.write(ScalaConsumerTestRecord(topic, item.key.toInt, value, delete).toString)
           consumedWriter.newLine()
         }
       } catch {
@@ -315,7 +315,7 @@ object TestLogCleaning {
 
 }
 
-case class TestRecord(topic: String, key: Int, value: Long, delete: Boolean) {
+case class ScalaConsumerTestRecord(topic: String, key: Int, value: Long, delete: Boolean) {
   def this(pieces: Array[String]) = this(pieces(0), pieces(1).toInt, pieces(2).toLong, pieces(3) == "d")
   def this(line: String) = this(line.split("\t"))
   override def toString = topic + "\t" +  key + "\t" + value + "\t" + (if(delete) "d" else "u")

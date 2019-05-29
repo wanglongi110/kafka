@@ -179,7 +179,7 @@ class ZookeeperConsumerConnectorTest extends KafkaServerTestHarness with Logging
 
   private def produceMessages(numMessages: Int, acks: Int = -1,
                               compressionType: CompressionType = CompressionType.NONE): Seq[String] = {
-    TestUtils.generateAndProduceMessages(servers, topic, numMessages, acks, compressionType)
+    TestUtils.generateAndProduceMessages(servers, topic, numMessages, acks)
   }
 
   @Test

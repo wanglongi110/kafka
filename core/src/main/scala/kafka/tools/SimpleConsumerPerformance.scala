@@ -146,7 +146,7 @@ object SimpleConsumerPerformance extends LazyLogging {
     val showDetailedStatsOpt = parser.accepts("show-detailed-stats", "If set, stats are reported for each reporting " +
       "interval as configured by reporting-interval")
 
-    val options = parser.parse(args : _*)
+    options = parser.parse(args : _*)
 
     CommandLineUtils.checkRequiredArgs(parser, options, topicOpt, urlOpt, numMessagesOpt)
 

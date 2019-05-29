@@ -19,7 +19,6 @@ package kafka.server
 
 import java.util.Optional
 
-import AbstractFetcherThread.ResultWithPartitions
 import kafka.api.{FetchRequest => _, _}
 import kafka.cluster.BrokerEndPoint
 import kafka.log.LogAppendInfo
@@ -33,6 +32,7 @@ import org.apache.kafka.common.record.{MemoryRecords, Records}
 import org.apache.kafka.common.requests.EpochEndOffset._
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.{LogContext, Time}
+import org.apache.kafka.common.requests.FetchResponse
 
 import scala.collection.JavaConverters._
 import scala.collection.{Map, mutable}

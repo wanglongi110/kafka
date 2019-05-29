@@ -35,9 +35,9 @@ class ListConsumerGroupTest extends ConsumerGroupCommandTest {
     props.setProperty("group.id", group)
     props.setProperty("zookeeper.connect", zkConnect)
     // mocks
-    val consumer1Mock = EasyMock.createMockBuilder(classOf[OldConsumer]).withConstructor(topicFilter, props).createMock()
+    val consumer1Mock: OldConsumer = EasyMock.createMockBuilder(classOf[OldConsumer]).withConstructor(topicFilter, props).createMock()
     props.setProperty("group.id", "some.other.group")
-    val consumer2Mock = EasyMock.createMockBuilder(classOf[OldConsumer]).withConstructor(topicFilter, props).createMock()
+    val consumer2Mock: OldConsumer = EasyMock.createMockBuilder(classOf[OldConsumer]).withConstructor(topicFilter, props).createMock()
 
     // stubs
     val opts = new ConsumerGroupCommandOptions(Array("--zookeeper", zkConnect))

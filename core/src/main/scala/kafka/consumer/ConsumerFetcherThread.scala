@@ -20,8 +20,8 @@ package kafka.consumer
 import kafka.api.{FetchRequestBuilder, FetchResponsePartitionData, OffsetRequest, Request}
 import kafka.cluster.BrokerEndPoint
 import kafka.message.ByteBufferMessageSet
-import kafka.server.{AbstractFetcherThread, PartitionFetchState, OffsetTruncationState}
-import AbstractFetcherThread.ResultWithPartitions
+import kafka.server.{ScalaConsumerAbstractFetcherThread, ScalaConsumerPartitionFetchState, ScalaConsumerOffsetTruncationState}
+import ScalaConsumerAbstractFetcherThread.ResultWithPartitions
 import kafka.common.{ErrorMapping, TopicAndPartition}
 
 import scala.collection.Map
@@ -40,7 +40,7 @@ class ConsumerFetcherThread(consumerIdString: String,
                             sourceBroker: BrokerEndPoint,
                             partitionMap: Map[TopicPartition, PartitionTopicInfo],
                             val consumerFetcherManager: ConsumerFetcherManager)
-        extends AbstractFetcherThread(name = s"ConsumerFetcherThread-$consumerIdString-$fetcherId-${sourceBroker.id}",
+        extends ScalaConsumerAbstractFetcherThread(name = s"ConsumerFetcherThread-$consumerIdString-$fetcherId-${sourceBroker.id}",
                                       clientId = config.clientId,
                                       sourceBroker = sourceBroker,
                                       fetchBackOffMs = config.refreshLeaderBackoffMs,
@@ -109,7 +109,7 @@ class ConsumerFetcherThread(consumerIdString: String,
     }
   }
 
-  protected def buildFetchRequest(partitionMap: collection.Seq[(TopicPartition, PartitionFetchState)]): ResultWithPartitions[FetchRequest] = {
+  protected def buildFetchRequest(partitionMap: collection.Seq[(TopicPartition, ScalaConsumerPartitionFetchState)]): ResultWithPartitions[FetchRequest] = {
     partitionMap.foreach { case ((topicPartition, partitionFetchState)) =>
       if (partitionFetchState.isReadyForFetch)
         fetchRequestBuilder.addFetch(topicPartition.topic, topicPartition.partition, partitionFetchState.fetchOffset, fetchSize)
@@ -123,13 +123,13 @@ class ConsumerFetcherThread(consumerIdString: String,
       new TopicPartition(t, p) -> new PartitionData(value)
     }
 
-  override def buildLeaderEpochRequest(allPartitions: Seq[(TopicPartition, PartitionFetchState)]): ResultWithPartitions[Map[TopicPartition, Int]] = {
+  override def buildLeaderEpochRequest(allPartitions: Seq[(TopicPartition, ScalaConsumerPartitionFetchState)]): ResultWithPartitions[Map[TopicPartition, Int]] = {
     ResultWithPartitions(Map(), Set())
   }
 
   override def fetchEpochsFromLeader(partitions: Map[TopicPartition, Int]): Map[TopicPartition, EpochEndOffset] = { Map() }
 
-  override def maybeTruncate(fetchedEpochs: Map[TopicPartition, EpochEndOffset]): ResultWithPartitions[Map[TopicPartition, OffsetTruncationState]] = {
+  override def maybeTruncate(fetchedEpochs: Map[TopicPartition, EpochEndOffset]): ResultWithPartitions[Map[TopicPartition, ScalaConsumerOffsetTruncationState]] = {
     ResultWithPartitions(Map(), Set())
   }
 }
@@ -138,7 +138,7 @@ class ConsumerFetcherThread(consumerIdString: String,
             "Please use org.apache.kafka.clients.consumer.internals.Fetcher instead.", "0.11.0.0")
 object ConsumerFetcherThread {
 
-  class FetchRequest(val underlying: kafka.api.FetchRequest) extends AbstractFetcherThread.FetchRequest {
+  class FetchRequest(val underlying: kafka.api.FetchRequest) extends ScalaConsumerAbstractFetcherThread.FetchRequest {
     private lazy val tpToOffset: Map[TopicPartition, Long] = underlying.requestInfo.map { case (tp, fetchInfo) =>
       new TopicPartition(tp.topic, tp.partition) -> fetchInfo.offset
     }.toMap
@@ -147,7 +147,7 @@ object ConsumerFetcherThread {
     override def toString = underlying.toString
   }
 
-  class PartitionData(val underlying: FetchResponsePartitionData) extends AbstractFetcherThread.PartitionData {
+  class PartitionData(val underlying: FetchResponsePartitionData) extends ScalaConsumerAbstractFetcherThread.PartitionData {
     def error = underlying.error
     def toRecords: MemoryRecords = underlying.messages.asInstanceOf[ByteBufferMessageSet].asRecords
     def highWatermark: Long = underlying.hw
