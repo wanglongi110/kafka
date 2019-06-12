@@ -343,15 +343,15 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
     trace("OffsetMap: %s".format(offsetsToCommit))
     var retriesRemaining = 1 + (if (isAutoCommit) 0 else config.offsetsCommitMaxRetries) // no retries for commits from auto-commit
     var done = false
+    var committed = false;
     while (!done) {
-      val committed = offsetsChannelLock synchronized {
+      committed = offsetsChannelLock synchronized {
         // committed when we receive either no error codes or only MetadataTooLarge errors
         if (offsetsToCommit.size > 0) {
           if (config.offsetsStorage == "zookeeper") {
             offsetsToCommit.foreach { case (topicAndPartition, offsetAndMetadata) =>
               commitOffsetToZooKeeper(topicAndPartition, offsetAndMetadata.offset)
             }
-            lastCommittedPartitionsAndOffsets = offsetsToCommit
             true
           } else {
             val offsetCommitRequest = OffsetCommitRequest(config.groupId, offsetsToCommit, clientId = config.clientId)
@@ -368,7 +368,6 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
                   if (error == Errors.NONE && config.dualCommitEnabled) {
                     val offset = offsetsToCommit(topicPartition).offset
                     commitOffsetToZooKeeper(topicPartition, offset)
-                    lastCommittedPartitionsAndOffsets = offsetsToCommit
                   }
 
                   (folded._1 || // update commitFailed
@@ -421,6 +420,20 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
         Thread.sleep(config.offsetsChannelBackoffMs)
       }
     }
+
+    // if committed offsets successfully, update lastCommittedPartitionsAndOffsets;
+    // otherwise commit failed, set lastCommittedPartitionsAndOffsets to null so that
+    // during consumer migration, if commit to zk failed, it won't get the previous committed
+    // offsets and try to commit that to kafka, which is a race condition where two consumers in
+    // the same consumer group can have discrepancy in committing offsets, i.e. consumer A first
+    // commits offsets successfully, then rebalance happens and A releases some of its partitions to B,
+    // then B commits offsets to both zk and kafka successfully, then A commit failed, it will fetch its previously
+    // committed offsets and commit to kafka again, which overwrites the correct offsets committed by B
+    // for the partitions that moved to B
+    if (committed)
+      lastCommittedPartitionsAndOffsets = offsetsToCommit
+    else
+      lastCommittedPartitionsAndOffsets = null
   }
 
   def getLastCommittedPartitionsAndOffsets = lastCommittedPartitionsAndOffsets
