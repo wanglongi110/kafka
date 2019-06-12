@@ -421,6 +421,12 @@ private[kafka] class ZookeeperConsumerConnector(val config: ConsumerConfig,
         Thread.sleep(config.offsetsChannelBackoffMs)
       }
     }
+ 
+    // always set lastCommittedPartitionsAndOffsets to passed in offsetsToCommit after commit finishes
+    // This is to get correct lastCommittedPartitionsAndOffsets after rebalance and current consumer 
+    // got assigned no partitions at all. If we don't set this after commit finishes, lastCommittedPartitionsAndOffsets
+    // would remain unchanged after rebalance releases all partitions. 
+    lastCommittedPartitionsAndOffsets = offsetsToCommit
   }
 
   def getLastCommittedPartitionsAndOffsets = lastCommittedPartitionsAndOffsets

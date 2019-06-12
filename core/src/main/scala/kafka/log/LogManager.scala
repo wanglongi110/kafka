@@ -847,7 +847,7 @@ class LogManager(logDirs: Seq[File],
         cleaner.updateCheckpoints(removedLog.dir.getParentFile)
       }
       removedLog.renameDir(Log.logDeleteDirName(topicPartition))
-      checkpointLogRecoveryOffsetsInDir(removedLog.dir.getParentFile)
+      checkpointLogRecoveryOffsetsInDir(removedLog.dir.getParentFile, false)
       checkpointLogStartOffsetsInDir(removedLog.dir.getParentFile)
       addLogToBeDeleted(removedLog)
       info(s"Log for partition ${removedLog.topicPartition} is renamed to ${removedLog.dir.getAbsolutePath} and is scheduled for deletion")
