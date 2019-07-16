@@ -27,12 +27,14 @@ import kafka.common.UnexpectedAppendOffsetException
 import kafka.log.{CleanerConfig, LogConfig, LogManager}
 import kafka.server._
 import kafka.utils.{MockScheduler, MockTime, TestUtils}
+import kafka.zk.KafkaZkClient
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.errors.ReplicaNotAvailableException
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.utils.Utils
 import org.apache.kafka.common.record._
 import org.apache.kafka.common.requests.LeaderAndIsrRequest
+import org.easymock.EasyMock
 import org.junit.{After, Before, Test}
 import org.junit.Assert._
 import org.scalatest.Assertions.assertThrows
@@ -69,13 +71,19 @@ class PartitionTest {
       logDirs = Seq(logDir1, logDir2), defaultConfig = logConfig, CleanerConfig(enableCleaner = false), time)
     logManager.startup()
 
+    val kafkaZkClient: KafkaZkClient = EasyMock.createMock(classOf[KafkaZkClient])
     val brokerProps = TestUtils.createBrokerConfig(brokerId, TestUtils.MockZkConnect)
     brokerProps.put(KafkaConfig.LogDirsProp, Seq(logDir1, logDir2).map(_.getAbsolutePath).mkString(","))
     val brokerConfig = KafkaConfig.fromProps(brokerProps)
     replicaManager = new ReplicaManager(
-      config = brokerConfig, metrics, time, zkClient = null, new MockScheduler(time),
+      config = brokerConfig, metrics, time, zkClient = kafkaZkClient, new MockScheduler(time),
       logManager, new AtomicBoolean(false), QuotaFactory.instantiate(brokerConfig, metrics, time, ""),
       brokerTopicStats, new MetadataCache(brokerId), new LogDirFailureChannel(brokerConfig.logDirs.size))
+
+    EasyMock.expect(kafkaZkClient.getEntityConfigs(EasyMock.anyString(), EasyMock.anyString())).andReturn(logProps).anyTimes()
+    EasyMock.expect(kafkaZkClient.conditionalUpdatePath(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject()))
+      .andReturn((true, 0)).anyTimes()
+    EasyMock.replay(kafkaZkClient)
   }
 
   @After
@@ -284,4 +292,25 @@ class PartitionTest {
     builder.build()
   }
 
+  /**
+    * Test for AtMinIsr partition state. We set the partition replica set size as 3, but only set one replica as an ISR.
+    * As the default minIsr configuration is 1, then the partition should be at min ISR (isAtMinIsr = true).
+    */
+  @Test
+  def testAtMinIsr(): Unit = {
+    val controllerEpoch = 3
+    val leader = brokerId
+    val follower1 = brokerId + 1
+    val follower2 = brokerId + 2
+    val controllerId = brokerId + 3
+    val replicas = List[Integer](leader, follower1, follower2).asJava
+    val isr = List[Integer](leader).asJava
+    val leaderEpoch = 8
+
+    val partition = new Partition(topicPartition.topic, topicPartition.partition, time, replicaManager)
+    assertFalse(partition.isAtMinIsr)
+    // Make isr set to only have leader to trigger AtMinIsr (default min isr config is 1)
+    partition.makeLeader(controllerId, new LeaderAndIsrRequest.PartitionState(controllerEpoch, leader, leaderEpoch, isr, 1, replicas, true), 0)
+    assertTrue(partition.isAtMinIsr)
+  }
 }

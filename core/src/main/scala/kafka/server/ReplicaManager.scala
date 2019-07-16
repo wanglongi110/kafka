@@ -234,6 +234,12 @@ class ReplicaManager(val config: KafkaConfig,
       def value = leaderPartitionsIterator.count(_.isUnderMinIsr)
     }
   )
+  val atMinIsrPartitionCount = newGauge(
+    "AtMinIsrPartitionCount",
+    new Gauge[Int] {
+      def value = leaderPartitionsIterator.count(_.isAtMinIsr)
+    }
+  )
 
   val recompressionCount = newGauge(
     "recompressionCount",
@@ -1479,6 +1485,7 @@ class ReplicaManager(val config: KafkaConfig,
     removeMetric("UnderReplicatedPartitions")
     removeMetric("UnderMinIsrPartitionCount")
     removeMetric("recompressedBatch")
+    removeMetric("AtMinIsrPartitionCount")
   }
 
   // High watermark do not need to be checkpointed only when under unit tests

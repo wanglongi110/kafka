@@ -106,6 +106,15 @@ class Partition(val topic: String,
       tags
     )
 
+    newGauge("AtMinIsr",
+      new Gauge[Int] {
+        def value = {
+          if (isAtMinIsr) 1 else 0
+        }
+      },
+      tags
+    )
+
     newGauge("ReplicasCount",
       new Gauge[Int] {
         def value = {
@@ -136,6 +145,15 @@ class Partition(val topic: String,
     leaderReplicaIfLocal match {
       case Some(leaderReplica) =>
         inSyncReplicas.size < leaderReplica.log.get.config.minInSyncReplicas
+      case None =>
+        false
+    }
+  }
+
+  def isAtMinIsr: Boolean = {
+    leaderReplicaIfLocal match {
+      case Some(leaderReplica) =>
+        inSyncReplicas.size == leaderReplica.log.get.config.minInSyncReplicas
       case None =>
         false
     }
@@ -763,6 +781,7 @@ class Partition(val topic: String,
     removeMetric("InSyncReplicasCount", tags)
     removeMetric("ReplicasCount", tags)
     removeMetric("LastStableOffsetLag", tags)
+    removeMetric("AtMinIsr", tags)
   }
 
   override def equals(that: Any): Boolean = that match {
