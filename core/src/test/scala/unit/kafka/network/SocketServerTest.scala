@@ -188,6 +188,7 @@ class SocketServerTest {
     verifyAcceptorBlockedPercent("PLAINTEXT", expectBlocked = false)
   }
 
+  @Ignore("Port binding often failed")
   @Test
   def testControlPlaneRequest(): Unit = {
     val testProps = new Properties

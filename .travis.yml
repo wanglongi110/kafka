@@ -16,9 +16,6 @@ language: java
 
 jdk:
   - oraclejdk8
-  
-before_install:
-  - gradle wrapper
 
 # By default, the install step will run ./gradlew assemble, which actually builds. Skip this step and do the actual
 # build during the build step.
@@ -28,7 +25,7 @@ install: true
 # Also excluded streams unitTest because they often fail with "pure virtual method called" error (KAFKA-3502).
 # TODO: re-enable these tests when the mentioned issues are resolved.
 script:
-  - ./gradlew clean compileJava compileScala compileTestJava compileTestScala checkstyleMain checkstyleTest findbugsMain unitTest -x :streams:unitTest rat --no-daemon -PxmlFindBugsReport=true -PtestLoggingEvents=started,passed,skipped,failed 
+  - ./gradlew clean compileJava compileScala compileTestJava compileTestScala checkstyleMain checkstyleTest spotbugsMain unitTest -x :streams:unitTest rat --no-daemon -PxmlFindBugsReport=true -PtestLoggingEvents=started,passed,skipped,failed
 
 before_cache:
   - rm -f  $HOME/.gradle/caches/modules-2/modules-2.lock

@@ -135,6 +135,8 @@ if (file('.git').exists()) {
         'PULL_REQUEST_TEMPLATE.md',
         'gradlew',
         'gradlew.bat',
+        'gradle/wrapper/*',
+        '**/docs/generated/**',
         'TROGDOR.md',
         '**/README.md',
         '**/id_rsa',
