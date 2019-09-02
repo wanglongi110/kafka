@@ -74,9 +74,12 @@ abstract class IntegrationTestHarness extends KafkaServerTestHarness {
     super.setUp()
     producerConfig.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, classOf[org.apache.kafka.common.serialization.ByteArraySerializer])
     producerConfig.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, classOf[org.apache.kafka.common.serialization.ByteArraySerializer])
+    producerConfig.put(ProducerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, boolean2Boolean(true))
+
     producerConfig ++= producerSecurityProps
     consumerConfig.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, classOf[org.apache.kafka.common.serialization.ByteArrayDeserializer])
     consumerConfig.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, classOf[org.apache.kafka.common.serialization.ByteArrayDeserializer])
+    consumerConfig.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, boolean2Boolean(true))
     consumerConfig ++= consumerSecurityProps
     for (_ <- 0 until producerCount)
       producers += createProducer

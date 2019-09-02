@@ -21,6 +21,7 @@ import java.time.Duration
 import java.util.concurrent.{ExecutorService, Executors, TimeUnit}
 import java.util.{Collections, Properties}
 
+import org.apache.kafka.clients.consumer.ConsumerConfig
 import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, ConsumerGroupService, KafkaConsumerGroupService, ZkConsumerGroupService}
 import kafka.consumer.OldConsumer
 import kafka.integration.KafkaServerTestHarness
@@ -142,6 +143,7 @@ object ConsumerGroupCommandTest {
       props.put("group.id", groupId)
       props.put("key.deserializer", classOf[StringDeserializer].getName)
       props.put("value.deserializer", classOf[StringDeserializer].getName)
+      props.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, boolean2Boolean(true))
     }
 
     def subscribe(): Unit

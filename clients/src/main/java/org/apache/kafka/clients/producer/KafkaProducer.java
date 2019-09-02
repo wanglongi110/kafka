@@ -408,7 +408,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 this.metadata = metadata;
             } else {
                 this.metadata =
-                    new Metadata(retryBackoffMs, config.getLong(ProducerConfig.METADATA_MAX_AGE_CONFIG), true, true,
+                    new Metadata(retryBackoffMs, config.getLong(ProducerConfig.METADATA_MAX_AGE_CONFIG), config.getBoolean(ProducerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG), true,
                         clusterResourceListeners, config.getLong(ProducerConfig.METADATA_TOPIC_EXPIRY_MS_CONFIG));
                 this.metadata.update(Cluster.bootstrap(addresses), Collections.<String>emptySet(), time.milliseconds());
             }

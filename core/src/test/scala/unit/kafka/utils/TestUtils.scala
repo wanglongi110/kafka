@@ -573,6 +573,7 @@ object TestUtils extends Logging {
     producerProps.put(ProducerConfig.RETRIES_CONFIG, retries.toString)
     producerProps.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, requestTimeoutMs.toString)
     producerProps.put(ProducerConfig.LINGER_MS_CONFIG, lingerMs.toString)
+    producerProps.put(ProducerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, boolean2Boolean(true))
 
     // In case of overflow set maximum possible value for deliveryTimeoutMs
     val deliveryTimeoutMsConfig = if (deliveryTimeoutMs != -1)
@@ -644,6 +645,7 @@ object TestUtils extends Logging {
     consumerProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList)
     consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset)
     consumerProps.put(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, partitionFetchSize.toString)
+    consumerProps.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, boolean2Boolean(true))
 
     val defaultProps = Map(
       ConsumerConfig.RETRY_BACKOFF_MS_CONFIG -> "100",

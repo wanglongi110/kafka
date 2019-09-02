@@ -237,6 +237,14 @@ public class ProducerConfig extends AbstractConfig {
             "The default is <code>null</code>, which means transactions cannot be used. " +
             "Note that transactions requires a cluster of at least three brokers by default what is the recommended setting for production; for development you can change this, by adjusting broker setting `transaction.state.log.replication.factor`.";
 
+    /** <code>allow.auto.create.topics</code> */
+    public static final String ALLOW_AUTO_CREATE_TOPICS_CONFIG = "allow.auto.create.topics";
+    private static final String ALLOW_AUTO_CREATE_TOPICS_DOC = "Allow automatic topic creation on the broker when" +
+        " subscribing to or assigning a topic. A topic being subscribed to will be automatically created only if the" +
+        " broker allows for it using `auto.create.topics.enable` broker configuration. This configuration must" +
+        " be set to `false` when using brokers older than 0.11.0";
+    public static final boolean DEFAULT_ALLOW_AUTO_CREATE_TOPICS = false;
+
     static {
         CONFIG = new ConfigDef().define(BOOTSTRAP_SERVERS_CONFIG, Type.LIST, Collections.emptyList(), new ConfigDef.NonNullValidator(), Importance.HIGH, CommonClientConfigs.BOOTSTRAP_SERVERS_DOC)
                                 .define(BUFFER_MEMORY_CONFIG, Type.LONG, 32 * 1024 * 1024L, atLeast(0L), Importance.HIGH, BUFFER_MEMORY_DOC)
@@ -362,7 +370,12 @@ public class ProducerConfig extends AbstractConfig {
                                         null,
                                         new ConfigDef.NonEmptyString(),
                                         Importance.LOW,
-                                        TRANSACTIONAL_ID_DOC);
+                                        TRANSACTIONAL_ID_DOC)
+                                .define(ALLOW_AUTO_CREATE_TOPICS_CONFIG,
+                                        Type.BOOLEAN,
+                                        DEFAULT_ALLOW_AUTO_CREATE_TOPICS,
+                                        Importance.MEDIUM,
+                                        ALLOW_AUTO_CREATE_TOPICS_DOC);
     }
 
     @Override
